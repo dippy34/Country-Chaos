@@ -219,16 +219,30 @@ export function findEliminatedZones(
   doubleEliminate: boolean
 ): Zone[] {
   const nonEmpty = zones.filter((z) => z.countries.length > 0);
-  if (nonEmpty.length === 0) return [];
+
+  // Safety: need at least 2 groups to eliminate one — can't wipe everyone out
+  if (nonEmpty.length <= 1) return [];
 
   const sorted = [...nonEmpty].sort(
     (a, b) => a.countries.length - b.countries.length
   );
 
-  if (doubleEliminate && sorted.length >= 2) {
-    return [sorted[0], sorted[1]];
+  if (doubleEliminate) {
+    // For double: need at least 3 groups so at least 1 survives
+    if (sorted.length >= 3) return [sorted[0], sorted[1]];
+    // Fallback to single elimination if only 2 groups
+    return [sorted[0]];
   }
-  return [sorted[0]];
+
+  // Never eliminate a group that would wipe out everyone:
+  // Only eliminate if the remaining groups (after elimination) have at least 1 country
+  const smallestZone = sorted[0];
+  const totalAfter = nonEmpty
+    .filter((z) => z.id !== smallestZone.id)
+    .reduce((sum, z) => sum + z.countries.length, 0);
+  if (totalAfter === 0) return [];
+
+  return [smallestZone];
 }
 
 export function getZonePositions(
