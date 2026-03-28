@@ -1,0 +1,75 @@
+export interface Country {
+  code: string;
+  name: string;
+  flag: string;
+  continent: "Africa" | "Asia" | "Europe" | "North America" | "South America" | "Oceania";
+  isLandlocked: boolean;
+  climate: "hot" | "cold" | "temperate";
+  population: number;
+  gdpTier: "low" | "medium" | "high";
+  firstLetter: string;
+}
+
+export const COUNTRIES: Country[] = [
+  { code: "US", name: "USA", flag: "🇺🇸", continent: "North America", isLandlocked: false, climate: "temperate", population: 331, gdpTier: "high", firstLetter: "U" },
+  { code: "CN", name: "China", flag: "🇨🇳", continent: "Asia", isLandlocked: false, climate: "temperate", population: 1439, gdpTier: "high", firstLetter: "C" },
+  { code: "IN", name: "India", flag: "🇮🇳", continent: "Asia", isLandlocked: false, climate: "hot", population: 1380, gdpTier: "medium", firstLetter: "I" },
+  { code: "BR", name: "Brazil", flag: "🇧🇷", continent: "South America", isLandlocked: false, climate: "hot", population: 212, gdpTier: "medium", firstLetter: "B" },
+  { code: "RU", name: "Russia", flag: "🇷🇺", continent: "Europe", isLandlocked: false, climate: "cold", population: 146, gdpTier: "medium", firstLetter: "R" },
+  { code: "DE", name: "Germany", flag: "🇩🇪", continent: "Europe", isLandlocked: false, climate: "temperate", population: 83, gdpTier: "high", firstLetter: "G" },
+  { code: "JP", name: "Japan", flag: "🇯🇵", continent: "Asia", isLandlocked: false, climate: "temperate", population: 126, gdpTier: "high", firstLetter: "J" },
+  { code: "GB", name: "UK", flag: "🇬🇧", continent: "Europe", isLandlocked: false, climate: "temperate", population: 67, gdpTier: "high", firstLetter: "U" },
+  { code: "FR", name: "France", flag: "🇫🇷", continent: "Europe", isLandlocked: false, climate: "temperate", population: 67, gdpTier: "high", firstLetter: "F" },
+  { code: "IT", name: "Italy", flag: "🇮🇹", continent: "Europe", isLandlocked: false, climate: "temperate", population: 60, gdpTier: "high", firstLetter: "I" },
+  { code: "CA", name: "Canada", flag: "🇨🇦", continent: "North America", isLandlocked: false, climate: "cold", population: 38, gdpTier: "high", firstLetter: "C" },
+  { code: "AU", name: "Australia", flag: "🇦🇺", continent: "Oceania", isLandlocked: false, climate: "hot", population: 25, gdpTier: "high", firstLetter: "A" },
+  { code: "KR", name: "S. Korea", flag: "🇰🇷", continent: "Asia", isLandlocked: false, climate: "temperate", population: 51, gdpTier: "high", firstLetter: "S" },
+  { code: "MX", name: "Mexico", flag: "🇲🇽", continent: "North America", isLandlocked: false, climate: "hot", population: 128, gdpTier: "medium", firstLetter: "M" },
+  { code: "ES", name: "Spain", flag: "🇪🇸", continent: "Europe", isLandlocked: false, climate: "temperate", population: 47, gdpTier: "high", firstLetter: "S" },
+  { code: "ID", name: "Indonesia", flag: "🇮🇩", continent: "Asia", isLandlocked: false, climate: "hot", population: 273, gdpTier: "medium", firstLetter: "I" },
+  { code: "TR", name: "Turkey", flag: "🇹🇷", continent: "Asia", isLandlocked: false, climate: "temperate", population: 83, gdpTier: "medium", firstLetter: "T" },
+  { code: "SA", name: "Saudi Arabia", flag: "🇸🇦", continent: "Asia", isLandlocked: false, climate: "hot", population: 34, gdpTier: "high", firstLetter: "S" },
+  { code: "NG", name: "Nigeria", flag: "🇳🇬", continent: "Africa", isLandlocked: false, climate: "hot", population: 206, gdpTier: "low", firstLetter: "N" },
+  { code: "EG", name: "Egypt", flag: "🇪🇬", continent: "Africa", isLandlocked: false, climate: "hot", population: 102, gdpTier: "low", firstLetter: "E" },
+  { code: "ZA", name: "S. Africa", flag: "🇿🇦", continent: "Africa", isLandlocked: false, climate: "temperate", population: 59, gdpTier: "medium", firstLetter: "S" },
+  { code: "AR", name: "Argentina", flag: "🇦🇷", continent: "South America", isLandlocked: false, climate: "temperate", population: 45, gdpTier: "medium", firstLetter: "A" },
+  { code: "PL", name: "Poland", flag: "🇵🇱", continent: "Europe", isLandlocked: false, climate: "cold", population: 38, gdpTier: "high", firstLetter: "P" },
+  { code: "NL", name: "Netherlands", flag: "🇳🇱", continent: "Europe", isLandlocked: false, climate: "temperate", population: 17, gdpTier: "high", firstLetter: "N" },
+  { code: "PH", name: "Philippines", flag: "🇵🇭", continent: "Asia", isLandlocked: false, climate: "hot", population: 109, gdpTier: "low", firstLetter: "P" },
+  { code: "PK", name: "Pakistan", flag: "🇵🇰", continent: "Asia", isLandlocked: false, climate: "hot", population: 220, gdpTier: "low", firstLetter: "P" },
+  { code: "BD", name: "Bangladesh", flag: "🇧🇩", continent: "Asia", isLandlocked: false, climate: "hot", population: 165, gdpTier: "low", firstLetter: "B" },
+  { code: "VN", name: "Vietnam", flag: "🇻🇳", continent: "Asia", isLandlocked: false, climate: "hot", population: 97, gdpTier: "low", firstLetter: "V" },
+  { code: "TH", name: "Thailand", flag: "🇹🇭", continent: "Asia", isLandlocked: false, climate: "hot", population: 70, gdpTier: "medium", firstLetter: "T" },
+  { code: "SE", name: "Sweden", flag: "🇸🇪", continent: "Europe", isLandlocked: false, climate: "cold", population: 10, gdpTier: "high", firstLetter: "S" },
+  { code: "NO", name: "Norway", flag: "🇳🇴", continent: "Europe", isLandlocked: false, climate: "cold", population: 5, gdpTier: "high", firstLetter: "N" },
+  { code: "CH", name: "Switzerland", flag: "🇨🇭", continent: "Europe", isLandlocked: true, climate: "cold", population: 8, gdpTier: "high", firstLetter: "S" },
+  { code: "AT", name: "Austria", flag: "🇦🇹", continent: "Europe", isLandlocked: true, climate: "cold", population: 9, gdpTier: "high", firstLetter: "A" },
+  { code: "HU", name: "Hungary", flag: "🇭🇺", continent: "Europe", isLandlocked: true, climate: "temperate", population: 10, gdpTier: "medium", firstLetter: "H" },
+  { code: "CZ", name: "Czechia", flag: "🇨🇿", continent: "Europe", isLandlocked: true, climate: "temperate", population: 11, gdpTier: "high", firstLetter: "C" },
+  { code: "ET", name: "Ethiopia", flag: "🇪🇹", continent: "Africa", isLandlocked: true, climate: "hot", population: 115, gdpTier: "low", firstLetter: "E" },
+  { code: "SD", name: "Sudan", flag: "🇸🇩", continent: "Africa", isLandlocked: false, climate: "hot", population: 44, gdpTier: "low", firstLetter: "S" },
+  { code: "KE", name: "Kenya", flag: "🇰🇪", continent: "Africa", isLandlocked: false, climate: "hot", population: 53, gdpTier: "low", firstLetter: "K" },
+  { code: "TZ", name: "Tanzania", flag: "🇹🇿", continent: "Africa", isLandlocked: false, climate: "hot", population: 60, gdpTier: "low", firstLetter: "T" },
+  { code: "UG", name: "Uganda", flag: "🇺🇬", continent: "Africa", isLandlocked: true, climate: "hot", population: 45, gdpTier: "low", firstLetter: "U" },
+  { code: "GH", name: "Ghana", flag: "🇬🇭", continent: "Africa", isLandlocked: false, climate: "hot", population: 32, gdpTier: "low", firstLetter: "G" },
+  { code: "CO", name: "Colombia", flag: "🇨🇴", continent: "South America", isLandlocked: false, climate: "hot", population: 50, gdpTier: "medium", firstLetter: "C" },
+  { code: "PE", name: "Peru", flag: "🇵🇪", continent: "South America", isLandlocked: false, climate: "hot", population: 33, gdpTier: "medium", firstLetter: "P" },
+  { code: "VE", name: "Venezuela", flag: "🇻🇪", continent: "South America", isLandlocked: false, climate: "hot", population: 28, gdpTier: "low", firstLetter: "V" },
+  { code: "CL", name: "Chile", flag: "🇨🇱", continent: "South America", isLandlocked: false, climate: "temperate", population: 19, gdpTier: "medium", firstLetter: "C" },
+  { code: "NZ", name: "New Zealand", flag: "🇳🇿", continent: "Oceania", isLandlocked: false, climate: "temperate", population: 5, gdpTier: "high", firstLetter: "N" },
+  { code: "IR", name: "Iran", flag: "🇮🇷", continent: "Asia", isLandlocked: false, climate: "hot", population: 84, gdpTier: "medium", firstLetter: "I" },
+  { code: "IQ", name: "Iraq", flag: "🇮🇶", continent: "Asia", isLandlocked: false, climate: "hot", population: 40, gdpTier: "medium", firstLetter: "I" },
+  { code: "UA", name: "Ukraine", flag: "🇺🇦", continent: "Europe", isLandlocked: false, climate: "cold", population: 44, gdpTier: "low", firstLetter: "U" },
+  { code: "RO", name: "Romania", flag: "🇷🇴", continent: "Europe", isLandlocked: false, climate: "temperate", population: 19, gdpTier: "medium", firstLetter: "R" },
+  { code: "BE", name: "Belgium", flag: "🇧🇪", continent: "Europe", isLandlocked: false, climate: "temperate", population: 11, gdpTier: "high", firstLetter: "B" },
+  { code: "PT", name: "Portugal", flag: "🇵🇹", continent: "Europe", isLandlocked: false, climate: "temperate", population: 10, gdpTier: "high", firstLetter: "P" },
+  { code: "GR", name: "Greece", flag: "🇬🇷", continent: "Europe", isLandlocked: false, climate: "temperate", population: 11, gdpTier: "high", firstLetter: "G" },
+  { code: "MY", name: "Malaysia", flag: "🇲🇾", continent: "Asia", isLandlocked: false, climate: "hot", population: 32, gdpTier: "medium", firstLetter: "M" },
+  { code: "SG", name: "Singapore", flag: "🇸🇬", continent: "Asia", isLandlocked: false, climate: "hot", population: 6, gdpTier: "high", firstLetter: "S" },
+  { code: "DK", name: "Denmark", flag: "🇩🇰", continent: "Europe", isLandlocked: false, climate: "cold", population: 6, gdpTier: "high", firstLetter: "D" },
+  { code: "FI", name: "Finland", flag: "🇫🇮", continent: "Europe", isLandlocked: false, climate: "cold", population: 5, gdpTier: "high", firstLetter: "F" },
+  { code: "BO", name: "Bolivia", flag: "🇧🇴", continent: "South America", isLandlocked: true, climate: "temperate", population: 12, gdpTier: "low", firstLetter: "B" },
+  { code: "PY", name: "Paraguay", flag: "🇵🇾", continent: "South America", isLandlocked: true, climate: "hot", population: 7, gdpTier: "low", firstLetter: "P" },
+  { code: "MN", name: "Mongolia", flag: "🇲🇳", continent: "Asia", isLandlocked: true, climate: "cold", population: 3, gdpTier: "low", firstLetter: "M" },
+  { code: "KZ", name: "Kazakhstan", flag: "🇰🇿", continent: "Asia", isLandlocked: true, climate: "cold", population: 19, gdpTier: "medium", firstLetter: "K" },
+];

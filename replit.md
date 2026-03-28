@@ -16,6 +16,17 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
 
+## Artifacts
+
+### `artifacts/minority-panic` (`@workspace/minority-panic`) — **Main App at /**
+A self-contained React + Vite browser game called "Minority Panic: Country Chaos". No backend needed.
+- Pure frontend game with 60 countries as animated emoji flag balls on a shared arena
+- Each round announces a rule (landlocked vs coastal, climate, population, continent, GDP, alphabet)
+- Countries sort into zones; smallest group gets eliminated with explosion animation
+- Chaos mechanics: fake-outs, double eliminations, last-second swaps
+- Endgame zoom + winner spotlight + full leaderboard
+- Files: `src/pages/Game.tsx` (main game component), `src/game/engine.ts` (game logic), `src/data/countries.ts` (country data)
+
 ## Structure
 
 ```text
