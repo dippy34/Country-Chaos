@@ -308,7 +308,8 @@ export class NewtonianWorld {
         for (let a = 0; a < 3; a++) for (let b = 0; b < 3; b++) s += Rm(a, i) * Ew[a][b] * Rm(b, j);
         Eb[i][j] = s;
       }
-    if (!this.probeMode) this.structure.update(Eb, dt, { hullTemp, pressure, dynPressure: dyn });
+    this.structure.invulnerable = this.probeMode;
+    this.structure.update(Eb, dt, { hullTemp, pressure, dynPressure: dyn });
   }
 
   telemetry(): Partial<Telemetry> {
@@ -320,10 +321,10 @@ export class NewtonianWorld {
     const speed = len(vrel);
     const gamma = 1 / Math.sqrt(1 - dot3(v, v) / (C * C));
     const dTauDt = Math.sqrt(Math.max(1 + (2 * this.potential(this.pos)) / (C * C) - dot3(v, v) / (C * C), 0));
+    const s = this.structure;
     const notices = [...this.notices];
     if (this.env.rho > 0) notices.push(`In ${b.def.name}'s atmosphere: ρ = ${this.env.rho.toExponential(2)} kg/m³, ${(this.env.pressure / 1e5).toFixed(2)} bar`);
-    if (this.env.hullTemp > 1200) notices.push(`HULL HEATING ${this.env.hullTemp.toFixed(0)} K`);
-    const s = this.structure;
+    if (s.hullTemp > 1200) notices.push(`HULL HEATING ${s.hullTemp.toFixed(0)} K (equilibrium ${this.env.hullTemp.toFixed(0)} K)`);
     return {
       mode: 'newtonian',
       properTime: this.tau,
@@ -347,7 +348,7 @@ export class NewtonianWorld {
         stress: s.stress,
         integrity: s.integrity,
         plasticStrain: s.deformation.reduce((m, d) => Math.max(m, d.strain), 0),
-        hullTemp: this.env.hullTemp,
+        hullTemp: s.hullTemp,
         pressure: this.env.pressure,
         failed: s.failed,
         crew: s.crew,

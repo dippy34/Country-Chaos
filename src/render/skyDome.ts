@@ -52,7 +52,7 @@ void main() {
     float ratio = exp2((bbLogL(g * T) - bbLogL(T)) * 3.321928);
     col = bbChroma(g * T) * L * ratio * uExposure;
   }
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(min(col, vec3(6e4)), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

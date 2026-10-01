@@ -194,6 +194,42 @@ export class KerrShip {
     if (this.history.length > this.maxHistory) this.history.splice(0, this.history.length - this.maxHistory);
   }
 
+  /**
+   * Give the ship a past: integrate the (unpowered) worldline backward by
+   * dTauBack, then forward again while recording history. The external
+   * observer can then immediately see light the ship emitted before "now".
+   */
+  preroll(dTauBack: number) {
+    const thrust = this.thrustBody;
+    this.thrustBody = [0, 0, 0];
+    const start = Float64Array.from(this.s);
+    let back = 0;
+    for (let i = 0; i < 20000 && back < dTauBack; i++) {
+      const h = Math.min(this.maxSubstep(), dTauBack - back);
+      this.rk4(-h);
+      back += h;
+      if (this.r < this.rPlus * 1.5) break; // do not reconstruct a past inside the hole
+    }
+    const t0 = this.s[0];
+    this.history = [];
+    this.lastRecordTau = -Infinity;
+    this.tau = -back;
+    this.record(true);
+    let fwd = 0;
+    for (let i = 0; i < 40000 && fwd < back; i++) {
+      const h = Math.min(this.maxSubstep(), back - fwd);
+      this.rk4(h);
+      fwd += h;
+      this.tau += h;
+      this.record(false);
+    }
+    // snap back exactly onto the starting state (removes integration round-off)
+    this.s.set(start);
+    this.tau = 0;
+    this.thrustBody = thrust;
+    void t0;
+  }
+
   /** Lorentz factor and speed relative to the ZAMO (outside) or KS-normal observer (inside). */
   localSpeed(): { gamma: number; v: number; frame: 'ZAMO' | 'KS-normal' } {
     const pos = this.pos;

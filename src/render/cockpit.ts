@@ -45,7 +45,7 @@ void main() {
   vec3 spec = uKeyE * pow(max(dot(n, h), 0.0), 60.0) * 0.25 * uMetal * step(0.0, dot(n, uKeyDir)) / 3.14159;
   vec3 refl = vec3(0.0);
   if (uEnvMode == 1) refl = textureLod(uEnv, reflect(-v, n), uEnvMip - 2.0).rgb / max(uExposure, 1e-30) * 0.08 * uMetal;
-  vec3 col = (diffuse + spec + refl) * uExposure + uEmissive;
+  vec3 col = min((diffuse + spec + refl) * uExposure + uEmissive, vec3(6e4));
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -102,7 +102,8 @@ export class Cockpit {
       const mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 48, r, 8, false), strut);
       this.body.add(mesh);
     };
-    tube([new THREE.Vector3(0, -0.45, -1.05), new THREE.Vector3(0, 0.25, -0.95), new THREE.Vector3(0, 0.62, -0.25), new THREE.Vector3(0, 0.6, 0.45), new THREE.Vector3(0, 0.2, 0.75)], 0.018);
+    // overhead hoop (behind the eye line, keeps the forward view clear)
+    tube([new THREE.Vector3(-0.38, 0.5, 0.35), new THREE.Vector3(0, 0.62, 0.3), new THREE.Vector3(0.38, 0.5, 0.35)], 0.02);
     for (const s of [-1, 1]) {
       tube([new THREE.Vector3(0.9 * s, -0.55, -0.95), new THREE.Vector3(0.82 * s, 0.05, -0.7), new THREE.Vector3(0.5 * s, 0.5, -0.1), new THREE.Vector3(0.35 * s, 0.55, 0.5), new THREE.Vector3(0.3 * s, 0.1, 0.8)], 0.024);
       tube([new THREE.Vector3(0.95 * s, -0.6, 0.6), new THREE.Vector3(0.95 * s, -0.55, -0.3), new THREE.Vector3(0.9 * s, -0.52, -0.95)], 0.03);
@@ -120,24 +121,13 @@ export class Cockpit {
     anchor('left', -0.52, -0.395, -0.76, -0.42, 0.32);
     anchor('center', 0, -0.37, -0.8, -0.42, 0);
     anchor('right', 0.52, -0.395, -0.76, -0.42, -0.32);
-    anchor('status', 0, -0.2, -0.95, -0.1, 0);
+    anchor('status', 0, -0.255, -0.92, -0.25, 0);
     anchor('legend', 0.6, -0.5, -0.2, -1.2, -0.5);
     anchor('menu', -0.6, -0.5, -0.2, -1.2, 0.5);
   }
 
   private mat(hex: number, metal: number, emissive = new THREE.Color(0, 0, 0)) {
-    const c = new THREE.Color(hex);
-    const m = new THREE.ShaderMaterial({
-      vertexShader: VERT,
-      fragmentShader: FRAG,
-      uniforms: {
-        ...this.shared,
-        uAlbedo: { value: new THREE.Vector3(c.r, c.g, c.b).multiplyScalar(1.6) },
-        uEmissive: { value: new THREE.Vector3(emissive.r, emissive.g, emissive.b) },
-        uMetal: { value: metal },
-      },
-      side: THREE.DoubleSide,
-    });
+    const m = litMaterial(this.shared, hex, metal, emissive);
     this.materials.push(m);
     return m;
   }
@@ -148,4 +138,43 @@ export class Cockpit {
     this.body.matrix.copy(m);
     this.body.matrixWorldNeedsUpdate = true;
   }
+}
+
+export type LitShared = Cockpit['shared'];
+
+/** Environment-lit material sharing light uniforms (cockpit, observer deck). */
+export function litMaterial(shared: LitShared, hex: number, metal: number, emissive = new THREE.Color(0, 0, 0)) {
+  const c = new THREE.Color(hex);
+  return new THREE.ShaderMaterial({
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    uniforms: {
+      ...shared,
+      uAlbedo: { value: new THREE.Vector3(c.r, c.g, c.b).multiplyScalar(1.6) },
+      uEmissive: { value: new THREE.Vector3(emissive.r, emissive.g, emissive.b) },
+      uMetal: { value: metal },
+    },
+    side: THREE.DoubleSide,
+  });
+}
+
+/** A small observation platform for the EXTERNAL OBSERVER view. */
+export function makeObserverDeck(shared: LitShared): THREE.Group {
+  const g = new THREE.Group();
+  const floor = litMaterial(shared, 0x1d2228, 0.4);
+  const rail = litMaterial(shared, 0x4a5058, 0.8);
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 1.6, 0.06, 48), floor);
+  ring.position.y = -1.25;
+  g.add(ring);
+  const torus = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.025, 8, 64), rail);
+  torus.rotation.x = Math.PI / 2;
+  torus.position.y = -0.25;
+  g.add(torus);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 1.0, 8), rail);
+    post.position.set(Math.cos(a) * 1.5, -0.75, Math.sin(a) * 1.5);
+    g.add(post);
+  }
+  return g;
 }

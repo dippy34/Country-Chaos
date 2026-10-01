@@ -72,7 +72,8 @@ float sunVisibility(vec3 p) {
 vec3 sunColor() { return bbChroma(uSunT); }
 
 vec4 finish(vec3 radiance, float alpha) {
-  return vec4(radiance * uExposure, alpha);
+  // keep within half-float range (metering targets); tone mapping saturates long before
+  return vec4(min(radiance * uExposure, vec3(6e4)), alpha);
 }
 `;
 
@@ -119,14 +120,20 @@ vec3 jupiterAlbedo(vec3 n, float footprint) {
     // anisotropic turbulence: stretched along longitude
     vec3 q = p * vec3(6.0, 6.0, 26.0);
     vec3 warp = vec3(fbm(q * 0.7, 5, footprint * 6.0), fbm(q * 0.7 + 7.1, 5, footprint * 6.0), 0.0) - 0.5;
-    float turb = fbm(q + warp * 3.0, 11, footprint * 26.0);
-    float fine = fbm(q * 6.0 + warp * 8.0, 8, footprint * 160.0);
+    float turb = smoothstep(0.25, 0.75, fbm(q + warp * 3.0, 11, footprint * 26.0));
+    float fine = smoothstep(0.2, 0.8, fbm(q * 6.0 + warp * 8.0, 8, footprint * 160.0));
     float latp = lat + 0.035 * (turb - 0.5) + 0.006 * (fine - 0.5);
     float belt = bandProfile(latp);
-    vec3 zone = vec3(0.93, 0.88, 0.78);
-    vec3 beltC = mix(vec3(0.62, 0.42, 0.29), vec3(0.72, 0.52, 0.36), turb);
+    vec3 zone = mix(vec3(0.92, 0.86, 0.74), vec3(0.98, 0.95, 0.88), fine);
+    vec3 beltC = mix(vec3(0.50, 0.30, 0.18), vec3(0.70, 0.50, 0.33), turb);
     vec3 col = mix(zone, beltC, belt);
-    col *= 0.86 + 0.28 * mix(turb, fine, 0.4);
+    // eddies and filaments within bands
+    float eddy = smoothstep(0.42, 0.62, fbm(q * 2.3 + warp * 6.0 + 11.0, 9, footprint * 60.0));
+    // thin bright/dark filaments (ridged turbulence)
+    float fil = 1.0 - abs(2.0 * fbm(q * 4.1 + warp * 10.0 + 23.0, 9, footprint * 110.0) - 1.0);
+    col *= 0.85 + 0.3 * smoothstep(0.75, 0.95, fil);
+    col = mix(col, col * vec3(0.78, 0.7, 0.62), eddy * 0.55);
+    col *= 0.78 + 0.44 * mix(turb, fine, 0.45);
     // equatorial zone ochre tint and festoons
     col = mix(col, vec3(0.86, 0.72, 0.52), 0.35 * exp(-degrees(lat) * degrees(lat) / 30.0) * smoothstep(0.45, 0.75, fine));
     // polar regions: bluish haze with cyclone speckle
@@ -179,20 +186,24 @@ vec3 moonAlbedo(vec3 n, float footprint) {
   return mix(col, vec3(0.75, 0.73, 0.7), (1.0 - smoothstep(0.03, 0.1, d)) * 0.8);
 }
 
-// single scattering through an exponential shell, numerically (Rayleigh + haze)
-vec3 atmosphere(vec3 o, vec3 d, float tMax, inout float trans) {
+// single scattering through an exponential shell, numerically (Rayleigh + haze).
+// Works in the spheroid's scaled frame (os = o*S, ds = d*S) so altitude is
+// measured from the oblate cloud deck, not from a sphere.
+vec3 atmosphere(vec3 os, vec3 ds, float A, float tMax, inout float trans) {
   if (uAtmTau <= 0.0) return vec3(0.0);
   float R1 = 1.0 + uAtmTop;
-  float b = dot(o, d);
-  float c = dot(o, o) - R1 * R1;
-  float disc = b * b - c;
+  float b = dot(os, ds);
+  float c = dot(os, os) - R1 * R1;
+  float disc = b * b - A * c;
   if (disc <= 0.0) return vec3(0.0);
-  float t0 = max(0.0, -b - sqrt(disc));
-  float t1 = min(tMax, -b + sqrt(disc));
+  float sq = sqrt(disc);
+  float t0 = max(0.0, (-b - sq) / A);
+  float t1 = min(tMax, (-b + sq) / A);
   if (t1 <= t0) return vec3(0.0);
   const int N = 10;
   float dt = (t1 - t0) / float(N);
   vec3 betaR = vec3(0.32, 0.6, 1.0);    // λ^-4 weighting (relative)
+  vec3 d = normalize(ds);
   float mu = dot(d, uSunDir);
   float pR = 0.75 * (1.0 + mu * mu);
   float g = 0.72;
@@ -200,20 +211,28 @@ vec3 atmosphere(vec3 o, vec3 d, float tMax, inout float trans) {
   vec3 sum = vec3(0.0);
   vec3 Tview = vec3(1.0);
   for (int i = 0; i < N; i++) {
-    vec3 p = o + d * (t0 + (float(i) + 0.5) * dt);
+    vec3 p = os + ds * (t0 + (float(i) + 0.5) * dt);
     float r = length(p);
     float h = r - 1.0;
-    float rho = exp(-h / uAtmH);
-    // sun path: shadowed if the planet blocks it, else Chapman-like grazing attenuation
+    float rho = exp(clamp(-h / uAtmH, -60.0, 8.0));
     vec3 n = p / r;
     float cosZ = dot(n, uSunDir);
-    float lit = smoothstep(-0.02, 0.02, cosZ + sqrt(max(2.0 * h, 0.0)));
-    float airmass = 1.0 / max(cosZ + 0.15 * pow(max(1.0 - cosZ, 0.0), 2.0), 0.03);
+    // sun path optical depth: Chapman-like grazing column through the tangent altitude
+    float tauSun;
+    if (cosZ > 0.0) {
+      float airmass = 1.0 / (cosZ + 0.15 * pow(1.0 - cosZ, 4.0) * 0.5 + 0.02 * sqrt(uAtmH));
+      tauSun = uAtmTau * rho * min(airmass, sqrt(6.2832 * r / uAtmH));
+    } else {
+      float hmin = r * sqrt(max(1.0 - cosZ * cosZ, 0.0)) - 1.0;
+      if (hmin < 0.0) { tauSun = 1e4; }
+      else tauSun = uAtmTau * exp(clamp(-hmin / uAtmH, -60.0, 8.0)) * sqrt(6.2832 * r / uAtmH) * 2.0;
+    }
+    float lit = 1.0;
     vec3 dTau = uAtmTau * rho * dt / uAtmH * (0.55 * betaR + 0.45 * vec3(1.0));
-    vec3 Tsun = exp(-uAtmTau * rho * airmass * (0.55 * betaR + 0.45));
+    vec3 Tsun = exp(-min(tauSun, 60.0) * (0.55 * betaR + 0.45));
     vec3 scatter = (0.55 * betaR * pR + 0.45 * vec3(pM)) / (4.0 * 3.14159);
-    sum += Tview * dTau * scatter * Tsun * lit;
-    Tview *= exp(-dTau);
+    sum += Tview * min(dTau, vec3(30.0)) * scatter * Tsun * lit;
+    Tview *= exp(-min(dTau, vec3(30.0)));
   }
   trans = (Tview.r + Tview.g + Tview.b) / 3.0;
   return sum * uSunE * sunColor();
@@ -252,7 +271,7 @@ void main() {
     }
   }
   float trans = 1.0;
-  vec3 atm = atmosphere(o, d, tHit, trans);
+  vec3 atm = atmosphere(os, ds, A, tHit, trans);
   color = color * trans + atm;
   // fade alpha for atmosphere-only fragments: additive (premultiplied, alpha 0)
   gl_FragColor = finish(color, alpha);
@@ -372,7 +391,7 @@ void main() {
   float thd = degrees(max(th, 0.0));
   float glare = uGlare * 10.0 * uE / (thd * thd + 0.02) * (1.0 - smoothstep(0.6, 1.0, length(vUv)));
   vec3 c = bbChroma(uT) * (core + glare);
-  gl_FragColor = vec4(c * uExposure, 0.0);
+  gl_FragColor = vec4(min(c * uExposure, vec3(6e4)), 0.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

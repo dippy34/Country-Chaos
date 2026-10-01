@@ -5,7 +5,7 @@ import { makeBlackbodyLUT } from '../src/render/blackbody';
 import { KerrTracer, diskTempTexture } from '../src/render/kerrTracer';
 import { buildDiskProfile } from '../src/physics/disk';
 import { horizonPlus, iscoRadius, ksPoint, lower } from '../src/physics/kerr';
-import { bodyTetrad, zamo } from '../src/physics/frames';
+import { bodyTetrad, normalObserver, zamo } from '../src/physics/frames';
 import { lookQuat } from '../src/physics/observer';
 import { M_SUN } from '../src/physics/constants';
 
@@ -29,10 +29,12 @@ const tracer = new KerrTracer(size, {
 });
 tracer.setQuality(parseInt(q.get('steps') ?? '500'), parseFloat(q.get('h') ?? '0.03'));
 const pos: [number, number, number] = [dist * Math.sin(incl), 0, dist * Math.cos(incl)];
-const z = zamo(k, ...pos)!;
 const p = ksPoint(k, ...pos);
-const qq = lookQuat([-pos[0], -pos[1], -pos[2]], [0, 0, 1]);
-const t = bodyTetrad(k, pos, lower(p, z), qq);
+// observer: ZAMO outside, or the Kerr–Schild normal ("rain"-like) observer anywhere
+const uObs = q.get('obs') === 'normal' || dist < 2.1 ? normalObserver(p).n : zamo(k, ...pos)!;
+const out = q.get('look') === 'out' ? 1 : -1;
+const qq = lookQuat([out * pos[0], out * pos[1], out * pos[2]], [0, 0, 1]);
+const t = bodyTetrad(k, pos, lower(p, uObs), qq);
 tracer.setCamera({ e: t.e, pos, t: 0 }, parseFloat(q.get('exp') ?? '1e-9'));
 tracer.renderCube(renderer);
 // display: perspective view of the cube from inside

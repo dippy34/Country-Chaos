@@ -3,7 +3,7 @@
  * SI conversions: lengths × GM/c², times × GM/c³, tidal tensor ÷ (GM/c³)².
  */
 import * as THREE from 'three';
-import { C, G0, M_SUN, gravLength, gravTime } from '../physics/constants';
+import { C, G0, M_SUN, SIGMA_SB, gravLength, gravTime } from '../physics/constants';
 import { DiskProfile, buildDiskProfile } from '../physics/disk';
 import { bodyTetrad, staticObserver, zamo, V4 } from '../physics/frames';
 import { KerrParams, dot, horizonMinus, horizonPlus, iscoRadius, ksPoint, ksR, lower, raise } from '../physics/kerr';
@@ -63,22 +63,18 @@ export class KerrWorld {
     const pos: [number, number, number] = [r * Math.sin(th), 0, r * Math.cos(th)];
     this.ship.placeAtRest(pos);
     // parking orbit: local circular speed relative to the ZAMO, along +φ (prograde)
-    const v = Math.sqrt(1 / Math.max(r - 2, 1)) * 0.98;
+    const v = Math.min(Math.sqrt(1 / Math.max(r - 2, 1)), 0.9) * (def.startOrbitFraction ?? 0.98);
     this.ship.setVelocityRelZamo([0, v, 0]);
     // nose toward the hole, "up" along the spin axis
     const fwd = [-pos[0], -pos[1], -pos[2]];
     this.ship.q = lookQuatArr(fwd, [0, 0, 1]);
     this.ship.history = [];
-    this.ship.advance(0, 1);
+    // the ship has been coasting on this orbit for a while: give it a past light cone
+    this.ship.preroll(1.6 * (def.observerR + def.startR));
     this.structure.reset();
     this.horizonCrossTau = null;
     this.observerT = 0;
     this.events = [];
-  }
-
-  setSpin(a: number) {
-    // rebuild the spacetime: everything depends on a
-    (this.k as { a: number }).a = a;
   }
 
   update(dtReal: number, warp: number, ctl: Controls, externalView: boolean) {
@@ -144,7 +140,8 @@ export class KerrWorld {
       const s = 1 / (this.Tm * this.Tm);
       this.E = Eg.map((row) => row.map((v) => v * s));
     }
-    if (!this.probeMode) this.structure.update(this.E, done * this.Tm, { hullTemp: this.hullTemp(), pressure: 0, dynPressure: 0 });
+    this.structure.invulnerable = this.probeMode;
+    this.structure.update(this.E, done * this.Tm, { hullTemp: this.hullTemp(), pressure: 0, dynPressure: 0 });
   }
 
   /** dT_obs/dτ ratio used to advance the observer's clock in external view. */
@@ -155,12 +152,17 @@ export class KerrWorld {
     return Math.min(Math.max(u[0], 1), 50);
   }
 
-  /** Radiative equilibrium with the disk: crude dilution estimate. */
+  /**
+   * Radiative-equilibrium hull temperature from the disk's luminosity,
+   * F ≈ L_disk / (4π d²) on a sunward-facing plate (no shadowing or lensing
+   * focus — an approximation that is poor inside a few M).
+   */
   hullTemp(): number {
     if (!this.diskOn) return 3;
-    const r = this.ship.r;
-    const dil = Math.min(0.5, (this.def.diskOuter * this.def.diskOuter) / (r * r + 1) * 0.15);
-    return Math.max(3, this.disk.Tmax * 0.5 * Math.pow(dil, 0.25));
+    const L = this.disk.efficiency * this.disk.mdot * C * C;
+    const d = Math.max(this.ship.r, this.disk.rIn) * this.Lm;
+    const F = L / (4 * Math.PI * d * d);
+    return Math.pow(F / SIGMA_SB + 81, 0.25);
   }
 
   tetradForCamera(externalView: boolean) {
@@ -215,7 +217,6 @@ export class KerrWorld {
     if (ship.terminated === 'inner-horizon' || (this.k.a > 0 && r < this.rMinus * 1.3))
       physics.speculative.push('Beyond the inner horizon: mass-inflation instability; what an observer meets is unknown — not rendered');
     if (this.k.a === 0 && r < 0.3) physics.speculative.push('Near r = 0 quantum gravity is needed; nothing is shown as fact');
-    let observer: NonNullable<Telemetry['bh']>['observer'];
     return {
       mode: 'kerr',
       properTime: ship.tau * this.Tm,
@@ -231,7 +232,7 @@ export class KerrWorld {
         distance: r * this.Lm,
         altitude: (r - this.rPlus) * this.Lm,
         angularDiameterDeg: shadowAng,
-        closingSpeed: (-drdtau * C) / Math.max(u[0], 1e-9) * 0 + -drdtau * C,
+        closingSpeed: -drdtau * C,
       },
       gravity: this.hoverAccel,
       tidal: { eig: s.tidalEig, shipDiffAccel: s.shipDiffAccel, crewDiffAccel: s.crewDiffAccel },
@@ -239,7 +240,7 @@ export class KerrWorld {
         stress: s.stress,
         integrity: s.integrity,
         plasticStrain: s.deformation.reduce((m, d) => Math.max(m, d.strain), 0),
-        hullTemp: this.hullTemp(),
+        hullTemp: s.hullTemp,
         pressure: 0,
         failed: s.failed,
         crew: s.crew,
@@ -257,7 +258,6 @@ export class KerrWorld {
         gravRedshiftAhead: this.starlightShift([0, 0, -1]),
         gravRedshiftBehind: this.starlightShift([0, 0, 1]),
         terminated: ship.terminated ?? undefined,
-        observer,
       },
       notices,
       physics,

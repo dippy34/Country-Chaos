@@ -41,10 +41,13 @@ export class Structure {
   shipDiffAccel = 0;
   instrumentsDown = new Set<string>();
   hullTemp = 3;
+  /** Thermal time constant of the hull + heat shield (s of proper time). */
+  thermalTau = 90;
   pressure = 0;
   tidalEig: [number, number, number] = [0, 0, 0];
 
   reset() {
+    this.hullTemp = 3;
     this.stress = 0;
     this.integrity = 1;
     this.deformation = [];
@@ -63,6 +66,9 @@ export class Structure {
    * @param E tidal tensor in body frame (s⁻²)
    * @param dt proper time elapsed for the ship (s)
    */
+  /** When true, loads are measured and reported but cause no damage (unmanned probe mode). */
+  invulnerable = false;
+
   update(E: number[][], dt: number, env: { hullTemp: number; pressure: number; dynPressure: number }) {
     const { values, vectors } = eigenSym3(E);
     this.tidalEig = [values[0], values[1], values[2]];
@@ -88,17 +94,20 @@ export class Structure {
     // pressure loads add directly
     const pFrac = Math.max(env.pressure / this.crushPa, env.dynPressure / 6e5);
     this.stress = Math.max(worst, pFrac);
-    this.hullTemp = env.hullTemp;
+    // hull temperature relaxes toward radiative equilibrium (thermal inertia)
+    const k = 1 - Math.exp(-dt / this.thermalTau);
+    this.hullTemp = this.hullTemp <= 3.5 ? env.hullTemp : this.hullTemp + (env.hullTemp - this.hullTemp) * k;
+    const T = this.hullTemp;
     this.pressure = env.pressure;
 
-    if (!this.failed) {
+    if (!this.failed && !this.invulnerable) {
       // plastic flow above yield → permanent stretch, loss of integrity
       if (worst > 1) {
         const rate = 0.02 * (worst - 1) ** 1.5;
         this.addStrain(worstAxis as [number, number, number], rate * dt);
         this.integrity -= rate * dt * 4;
       }
-      if (env.hullTemp > this.hullTempLimit) this.integrity -= dt * 0.05 * ((env.hullTemp - this.hullTempLimit) / 300);
+      if (T > this.hullTempLimit) this.integrity -= dt * 0.05 * ((T - this.hullTempLimit) / 300);
       if (pFrac > 1) this.integrity -= dt * 0.3 * pFrac;
       // instruments fail probabilistically as stress approaches yield
       const pFail = Math.max(0, this.stress - 0.55) ** 2 * 0.6 * dt;
@@ -107,17 +116,18 @@ export class Structure {
       }
       const ult = this.ultimatePa / this.yieldPa;
       if (worst > ult) this.fail('Catastrophic structural failure: tidal stress exceeded ultimate strength');
-      else if (env.hullTemp > this.hullTempDestroy) this.fail('Hull destroyed by radiative heating');
+      else if (T > this.hullTempDestroy) this.fail('Hull destroyed by radiative heating');
       else if (pFrac > 2.5) this.fail('Hull collapse under atmospheric pressure');
       else if (this.integrity <= 0) this.fail('Structural integrity lost');
     }
 
+    if (this.invulnerable) return;
     const a = this.crewDiffAccel;
     const rank: CrewState[] = ['nominal', 'aware', 'strained', 'injured', 'incapacitated', 'killed'];
     const now: CrewState = a > 1500 ? 'killed' : a > 400 ? 'incapacitated' : a > 120 ? 'injured' : a > 20 ? 'strained' : a > 1 ? 'aware' : 'nominal';
     // injuries do not heal within a flight
     if (rank.indexOf(now) > rank.indexOf(this.crew) || rank.indexOf(this.crew) < 3) this.crew = now;
-    if (env.hullTemp > 900 && rank.indexOf(this.crew) < 3) this.crew = 'injured';
+    if (T > 2000 && rank.indexOf(this.crew) < 3) this.crew = 'injured';
   }
 
   private addStrain(axis: [number, number, number], d: number) {
