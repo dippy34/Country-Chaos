@@ -18,6 +18,11 @@ import { SYSTEMS, SystemDef, KerrSystemDef } from './world/systems';
 import { Telemetry } from './world/telemetry';
 import { Hud, overlayText } from './ui/hud';
 import { Action, Input } from './input/controls';
+import { UIPanel, VRUI } from './ui/vrui';
+import { makeMenuButton, makeMenuPanel, makeWelcomePanel } from './ui/menus';
+import { LabelLayer } from './ui/labels';
+import { fmtDist, fmtTime } from './world/telemetry';
+import { dot as kdot } from './physics/kerr';
 
 const WARPS = [1, 10, 100, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8];
 const THRUSTS = [0.1, 0.3, 1, 3, 10, 30];
@@ -51,12 +56,17 @@ export class App {
   dual = false;
   private last = 0;
   private overlayTimer = 0;
-  private menuRepeat = 0;
   private frameAvg = 16;
   private slowFrames = 0;
   private fastAdapt = 0;
   private flash: { text: string; until: number } | null = null;
   private overlay = document.getElementById('overlay')!;
+  ui!: VRUI;
+  uiRoot = new THREE.Group();
+  menuPanel!: UIPanel;
+  welcomePanel!: UIPanel;
+  menuButtons: UIPanel[] = [];
+  labels = new LabelLayer();
 
   constructor(private container: HTMLElement) {
     this.deck = makeObserverDeck(this.cockpit.shared);
@@ -83,7 +93,12 @@ export class App {
     const vrButton = VRButton.createButton(r);
     document.body.appendChild(vrButton);
     r.xr.addEventListener('sessionstart', () => {
+      // standalone headsets: lighter geodesic load, 72 Hz target, menus usable by laser
       if (this.quality === 'high' || this.quality === 'ultra') this.setQuality('medium');
+      const s = r.xr.getSession() as (XRSession & { updateTargetFrameRate?: (r: number) => Promise<void>; supportedFrameRates?: Float32Array }) | null;
+      if (s?.updateTargetFrameRate && s.supportedFrameRates && Array.from(s.supportedFrameRates).includes(72)) s.updateTargetFrameRate(72).catch(() => {});
+      this.welcomePanel.mesh.visible = true;
+      this.welcomePanel.dirty = true;
     });
     this.input = new Input(r.domElement);
     // visible controllers (models are fetched from the WebXR input-profiles CDN on device)
@@ -116,6 +131,7 @@ export class App {
     });
     this.hud.attach(this.cockpit.panelAnchors);
     this.deck.visible = false;
+    this.setupUI();
 
     this.buildPanel();
     let sys = this.systems.find((s) => s.id === (q.get('sys') ?? 'sgra')) ?? this.systems[0];
@@ -132,6 +148,118 @@ export class App {
     if (q.get('warp')) this.warpIdx = Math.max(0, WARPS.indexOf(parseFloat(q.get('warp')!)));
     document.getElementById('loading')!.remove();
     r.setAnimationLoop((t) => this.frame(t));
+  }
+
+  private setupUI() {
+    this.scene.add(this.uiRoot);
+    this.scene.add(this.labels.group);
+    this.menuPanel = makeMenuPanel(() => {
+      const w = (this.kWorld ?? this.nWorld)!;
+      return {
+        systems: this.systems,
+        current: this.current?.id ?? '',
+        view: this.view,
+        isBlackHole: !!this.kWorld,
+        diskOn: this.kWorld?.diskOn ?? false,
+        assist: w?.assist ?? false,
+        probe: w?.probeMode ?? false,
+        warp: WARPS[this.warpIdx],
+        thrustG: THRUSTS[this.thrustIdx],
+        quality: this.quality,
+      };
+    });
+    this.menuPanel.mesh.position.set(0, -0.06, -0.82);
+    this.menuPanel.mesh.rotation.x = -0.12;
+    this.menuPanel.mesh.visible = false;
+    this.welcomePanel = makeWelcomePanel();
+    this.welcomePanel.mesh.position.set(0, -0.02, -0.9);
+    this.welcomePanel.mesh.rotation.x = -0.06;
+    this.uiRoot.add(this.menuPanel.mesh, this.welcomePanel.mesh);
+    const b1 = makeMenuButton();
+    this.cockpit.panelAnchors.menu.add(b1.mesh);
+    const b2 = makeMenuButton();
+    b2.mesh.position.set(-0.05, -0.62, -0.92);
+    b2.mesh.rotation.x = -0.6;
+    this.deck.add(b2.mesh);
+    this.menuButtons = [b1, b2];
+    this.ui = new VRUI(this.renderer, this.scene, this.camera, this.renderer.domElement);
+    this.ui.panels = [this.welcomePanel, this.menuPanel, b1, b2];
+    this.ui.onClick = (panel, id) => this.onUIClick(panel, id);
+  }
+
+  private get uiOpen() {
+    return this.menuPanel.mesh.visible || this.welcomePanel.mesh.visible;
+  }
+
+  private showMenu(on: boolean) {
+    this.menuPanel.mesh.visible = on;
+    if (on) this.welcomePanel.mesh.visible = false;
+    this.menuPanel.dirty = true;
+  }
+
+  private onUIClick(panel: UIPanel, id: string) {
+    if (panel === this.welcomePanel) {
+      this.welcomePanel.mesh.visible = false;
+      if (id === 'menu') this.showMenu(true);
+      return;
+    }
+    if (this.menuButtons.includes(panel)) {
+      this.showMenu(!this.menuPanel.mesh.visible);
+      return;
+    }
+    const map: Record<string, Action> = {
+      view: 'toggleView', assist: 'toggleAssist', point: 'pointTarget', reset: 'reset', 'warp-': 'warpDown', 'warp+': 'warpUp',
+      'thr-': 'thrustDown', 'thr+': 'thrustUp', disk: 'disk', probe: 'probe',
+    };
+    if (id.startsWith('dest:')) {
+      const i = parseInt(id.slice(5));
+      this.showMenu(false);
+      this.loadSystem(this.systems[i]);
+    } else if (id === 'close') this.showMenu(false);
+    else if (id === 'help') {
+      this.showMenu(false);
+      this.welcomePanel.mesh.visible = true;
+      this.welcomePanel.dirty = true;
+    } else if (id === 'quality') {
+      const order: (keyof typeof QUALITY)[] = ['low', 'medium', 'high', 'ultra'];
+      this.setQuality(order[(order.indexOf(this.quality) + 1) % order.length]);
+    } else if (map[id]) this.handle(new Set([map[id]]));
+    this.menuPanel.dirty = true;
+  }
+
+  /** Name tags for what is in the sky. */
+  private updateLabels() {
+    this.labels.begin();
+    const deg = (r: number) => (r * 180) / Math.PI;
+    if (this.nWorld && this.nView) {
+      const w = this.nWorld;
+      const Rt = new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(w.q)).transpose();
+      w.bodies.forEach((b, i) => {
+        const rel = new THREE.Vector3(b.pos[0] - w.pos[0], b.pos[1] - w.pos[1], b.pos[2] - w.pos[2]);
+        const d = rel.length();
+        const ang = Math.asin(Math.min(1, b.def.radius / d));
+        const alt = w.altitude(b, w.pos);
+        const isTarget = i === w.targetIndex;
+        if (!isTarget && deg(ang) < 0.05 && b.def.kind !== 'star') return;
+        this.labels.put(`b${i}`, rel.applyMatrix3(Rt), b.def.name, `${fmtDist(Math.max(alt, 0))} away · ${deg(2 * ang).toFixed(deg(ang) < 1 ? 2 : 0)}° wide`, isTarget ? '#ffd27a' : '#7fe0ff', Math.min(ang * 1.05, 0.5) + 0.01);
+      });
+    } else if (this.kWorld) {
+      const k = this.kWorld;
+      const ext = this.view === 'external';
+      const t = ext ? k.observer.tetrad : k.ship.tetrad();
+      const pos = ext ? k.observer.pos : k.ship.pos;
+      const toHole = [0, -pos[0], -pos[1], -pos[2]];
+      const dir = new THREE.Vector3(...[1, 2, 3].map((i) => kdot(t.point, t.e[i], toHole)));
+      const name = this.current.name.replace(/ \(.*\)$/, '');
+      const tel = k.telemetry();
+      const detail = tel.bh?.inside ? 'you are inside its event horizon' : `horizon ${fmtDist(tel.bh!.distToHorizonM)} away`;
+      this.labels.put('bh', dir, name, ext ? 'seen from the observation deck' : detail, '#ffd27a', 0.25);
+      if (ext && this.kView?.image) {
+        const o = this.kView.observerTelemetry();
+        this.labels.put('ship', this.kView.marker.position.clone(), 'Your ship', `as it was ${fmtTime(o.delay)} ago`, '#ff8cf0', 0.03);
+      }
+    }
+    this.labels.end();
   }
 
   private resize() {
@@ -228,11 +356,6 @@ export class App {
     const w = this.nWorld ?? this.kWorld;
     if (!w) return;
     for (const a of actions) {
-      if (this.hud.menuOpen && a === 'warpDown') {
-        this.hud.menuOpen = false;
-        this.loadSystem(this.systems[this.hud.menuIndex]);
-        continue;
-      }
       switch (a) {
         case 'toggleView':
           this.setView(this.view === 'pilot' ? 'external' : 'pilot');
@@ -278,8 +401,7 @@ export class App {
           }
           break;
         case 'menu':
-          this.hud.menuOpen = !this.hud.menuOpen;
-          document.getElementById('panel')!.classList.toggle('hidden', false);
+          this.showMenu(!this.menuPanel.mesh.visible);
           break;
         case 'help':
           document.getElementById('panel')!.classList.toggle('hidden');
@@ -312,17 +434,13 @@ export class App {
     this.last = time;
     const r = this.renderer;
     const session = r.xr.getSession();
-    this.input.poll(session);
+    this.ui.update();
+    this.input.poll(session, this.ui.busyHands);
     const actions = this.input.take();
-    // VR menu navigation with the left stick
-    if (this.hud.menuOpen) {
-      this.menuRepeat -= dt;
-      const y = this.input.thrust[2];
-      if (Math.abs(y) > 0.6 && this.menuRepeat <= 0) {
-        this.hud.menuIndex = (this.hud.menuIndex + (y > 0 ? 1 : -1) + this.systems.length) % this.systems.length;
-        this.menuRepeat = 0.25;
-      }
+    if (this.uiOpen) {
+      // menus are modal: no flying while one is open
       this.input.thrust = [0, 0, 0];
+      this.input.rot = [0, 0, 0];
     }
     this.handle(actions);
 
@@ -373,6 +491,7 @@ export class App {
       this.exposure.update(this.exposure.sync ? 1 : dt * 6);
     } else this.exposure.update(dt);
 
+    this.updateLabels();
     const tel = this.telemetry(warp);
     this.hud.update(dt, tel, this.systems, this.current.id);
     this.overlayTimer -= dt;

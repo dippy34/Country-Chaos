@@ -124,14 +124,14 @@ export class AutoExposure {
       }
     all.sort((a, b) => a - b);
     const p98 = all[Math.floor(all.length * 0.98)];
-    return Math.max(Math.exp(sumLog / sumW), p98 / 8);
+    return Math.max(Math.exp(sumLog / sumW), p98 / 10);
   }
 
   private analyseFovea(m: Meter, used: number) {
     let s = 0;
     const n = m.size * m.size;
     for (let i = 0; i < n; i++) s += this.lum(m, i * 4, used);
-    return s / n / 3;
+    return s / n / 5;
   }
 
   private combine() {

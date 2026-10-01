@@ -98,7 +98,8 @@ const jupiterSystem = (startNear: string, startDistance: number, dir: [number, n
 });
 
 export const SYSTEMS: SystemDef[] = [
-  jupiterSystem('Jupiter', 3.2e9, [0.55, -0.8, 0.12]),
+  // approach from the sunward side so Jupiter greets you as a lit, gibbous disc
+  jupiterSystem('Jupiter', 3.2e9, [-0.6, -0.78, 0.14]),
   jupiterSystem('Sun', R_SUN + 0.1 * AU, [-0.3, 0.95, 0.05]),
   {
     kind: 'newtonian',

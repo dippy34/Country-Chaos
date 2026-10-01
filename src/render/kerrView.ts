@@ -27,8 +27,8 @@ export interface Quality {
 }
 
 export const QUALITY: Record<string, Quality> = {
-  low: { map: 224, faces: 1, steps: 260, h: 0.055, octaves: 5, telescope: 192 },
-  medium: { map: 320, faces: 2, steps: 360, h: 0.045, octaves: 7, telescope: 256 },
+  low: { map: 224, faces: 1, steps: 240, h: 0.06, octaves: 5, telescope: 160 },
+  medium: { map: 288, faces: 1, steps: 340, h: 0.045, octaves: 7, telescope: 224 },
   high: { map: 448, faces: 6, steps: 500, h: 0.035, octaves: 10, telescope: 384 },
   ultra: { map: 640, faces: 6, steps: 700, h: 0.028, octaves: 12, telescope: 512 },
 };

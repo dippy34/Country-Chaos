@@ -76,6 +76,11 @@ arrival is simulated.
 
 ## Controls
 
+In VR a welcome screen explains the controls. Point either controller at any panel and
+pull the trigger to click. Press **Y** (or the **☰ MENU** button on the left console) for
+the destination menu, view switch, time warp, engine power, disk and quality. Floating
+labels name what you are looking at and how far away it is.
+
 | | Desktop | VR (Touch / xr-standard) |
 |---|---|---|
 | Main engine / retro | W / S | right trigger / left trigger |
@@ -83,13 +88,13 @@ arrival is simulated.
 | Pitch / yaw | arrow keys | right stick |
 | Roll | Q / E | grips |
 | Look around | drag the mouse | your head |
-| Engine power (0.1–30 g) | `[` `]` | — |
+| Engine power (0.1–30 g) | `[` `]` | menu |
 | Time warp (×1 … ×10⁸) | `,` `.` | X / B |
 | Pilot ⇄ external observer | V | A |
 | Station-keep (hold ZAMO / match target) | H | left-stick click |
 | Point at target / next target | G / T | right-stick click |
-| Disk on/off · unmanned probe · reset | K · P · Backspace | — |
-| Destinations | 1–7 or the panel | Y opens the menu, stick to select, X to go |
+| Menu (destinations, options) | M, or click ☰ MENU | Y, or point at ☰ MENU |
+| Disk on/off · unmanned probe · reset | K · P · Backspace | menu |
 
 ## What makes the scale feel real
 

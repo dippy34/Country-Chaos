@@ -13,9 +13,6 @@ export class Hud {
   str = new Panel(768, 512, 0.42);
   status = new Panel(1280, 160, 0.78);
   legend = new Panel(768, 900, 0.36);
-  menu = new Panel(768, 900, 0.36);
-  menuOpen = false;
-  menuIndex = 0;
   private timer = 0;
   private next = 0;
 
@@ -25,7 +22,6 @@ export class Hud {
     anchors.right.add(this.str.mesh);
     anchors.status.add(this.status.mesh);
     anchors.legend.add(this.legend.mesh);
-    anchors.menu.add(this.menu.mesh);
   }
 
   update(dt: number, tel: Telemetry, systems: SystemDef[], current: string) {
@@ -46,9 +42,9 @@ export class Hud {
       () => this.drawStatus(tel),
       () => this.drawStatus(tel),
       () => this.drawLegend(tel),
-      () => this.drawMenu(systems, current),
     ];
-    if (this.next === 0 || this.menuOpen) this.drawMenu(systems, current);
+    void systems;
+    void current;
     draws[this.next % draws.length]();
     this.next++;
   }
@@ -147,17 +143,7 @@ export class Hud {
     p.end();
   }
 
-  private drawMenu(systems: SystemDef[], current: string) {
-    const p = this.menu;
-    let y = p.begin(this.menuOpen ? 'DESTINATIONS (stick ↑↓, X = go)' : 'MENU: press Y / M', CYAN);
-    systems.forEach((s, i) => {
-      const sel = this.menuOpen && i === this.menuIndex;
-      const cur = s.id === current;
-      y = p.text(y, `${sel ? '▶' : ' '} ${i + 1}. ${s.name}${cur ? '  (here)' : ''}`, sel ? WARN : cur ? GOOD : '#e8f4ff', 22);
-    });
-    y = p.text(y + 10, 'Jumping between systems is a non-physical gameplay convenience. Everything after arrival is simulated.', '#8fa9bf', 18);
-    p.end();
-  }
+
 }
 
 /** Desktop text overlay. */

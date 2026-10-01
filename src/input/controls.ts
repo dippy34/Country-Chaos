@@ -56,7 +56,7 @@ export class Input {
   }
 
   /** Poll devices; call once per frame. */
-  poll(session: XRSession | null) {
+  poll(session: XRSession | null, uiHands: Set<'left' | 'right'> = new Set()) {
     const k = (c: string) => this.k(c);
     this.thrust = [k('KeyD') - k('KeyA'), k('KeyR') + k('Space') - k('KeyF') - k('ControlLeft'), k('KeyS') - k('KeyW')];
     this.rot = [k('ArrowUp') - k('ArrowDown'), k('ArrowLeft') - k('ArrowRight'), k('KeyQ') - k('KeyE')];
@@ -77,7 +77,7 @@ export class Input {
       if (hand === 'left') {
         this.thrust[0] += ax(2);
         this.thrust[2] += ax(3);
-        this.thrust[2] += val(0); // trigger: retro thrust (toward +Z body)
+        if (!uiHands.has('left')) this.thrust[2] += val(0); // trigger: retro thrust (toward +Z body)
         if (pressed(1)) this.rot[2] += 1; // grip: roll left
         edge(3, 'toggleAssist');
         edge(4, 'warpDown');
@@ -85,7 +85,7 @@ export class Input {
       } else if (hand === 'right') {
         this.rot[1] -= ax(2);
         this.rot[0] -= ax(3);
-        this.thrust[2] -= val(0); // trigger: main engine (forward)
+        if (!uiHands.has('right')) this.thrust[2] -= val(0); // trigger: main engine (forward)
         if (pressed(1)) this.rot[2] -= 1; // grip: roll right
         edge(3, 'pointTarget');
         edge(4, 'toggleView');
