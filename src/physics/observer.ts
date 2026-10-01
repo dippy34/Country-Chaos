@@ -101,6 +101,10 @@ interface ShotResult {
 
 export class ExternalObserver {
   readonly tetrad: Tetrad;
+  /** Attitude-free tetrad at the observer (reference frame for the lensing map). */
+  readonly refTetrad: Tetrad;
+  /** Body → reference rotation (quaternion [x,y,z,w]). */
+  readonly q: [number, number, number, number];
   readonly rPlus: number;
   private cache = new WeakMap<HistorySample, ImageSolution>();
   private hint = 0;
@@ -118,7 +122,9 @@ export class ExternalObserver {
     const uCov = lower(p, u) as V4;
     const fwd = [lookAt[0] - pos[0], lookAt[1] - pos[1], lookAt[2] - pos[2]];
     const q = lookQuat(fwd, Math.abs(norm(fwd)[2]) > 0.95 ? [0, 1, 0] : [0, 0, 1]);
+    this.q = q;
     this.tetrad = bodyTetrad(k, pos, uCov, q);
+    this.refTetrad = bodyTetrad(k, pos, uCov, [0, 0, 0, 1]);
     this.rPlus = horizonPlus(k);
   }
 

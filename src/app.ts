@@ -37,7 +37,6 @@ export class App {
   bb!: THREE.DataTexture;
   sky!: THREE.WebGLCubeRenderTarget;
   dome!: SkyDome;
-  dome2!: SkyDome;
   dualScene = new THREE.Scene();
   systems: SystemDef[] = SYSTEMS.map((s) => ({ ...s }));
   current!: SystemDef;
@@ -102,8 +101,6 @@ export class App {
     this.sky = generateSky(r, q.get('sky') ? parseInt(q.get('sky')!) : this.quality === 'low' ? 512 : 1024);
     this.dome = new SkyDome(this.sky.texture, this.bb);
     this.dome.material.uniforms.uExposure = this.exposureU;
-    this.dome2 = new SkyDome(this.sky.texture, this.bb);
-    this.dualScene.add(this.dome2.mesh);
 
     this.camera.layers.enable(CELESTIAL_LAYER);
     this.scene.add(this.camera);
@@ -151,6 +148,8 @@ export class App {
     this.nView?.dispose();
     this.kView?.telescopePanel.removeFromParent();
     this.kView?.marker.removeFromParent();
+    this.kView?.dome.mesh.removeFromParent();
+    this.kView?.dome2.mesh.removeFromParent();
     this.kView?.dispose();
     this.nWorld = this.nView = this.kWorld = this.kView = null;
     this.current = def;
@@ -160,11 +159,15 @@ export class App {
       this.kView = new KerrView(this.kWorld, this.bb, this.sky.texture, QUALITY[this.quality]);
       this.deck.add(this.kView.telescopePanel);
       this.celestial.add(this.kView.marker);
+      this.celestial.add(this.kView.dome.mesh);
+      this.dualScene.add(this.kView.dome2.mesh);
+      this.dome.mesh.visible = false;
       this.kView.marker.layers.enable(0);
       this.kWorld.thrustG = THRUSTS[this.thrustIdx];
       const L0 = blackbody(this.kWorld.disk.Tmax * 0.6).L * (def.disk ? Math.min(0.3, (def.diskOuter / def.startR) ** 2) : 0) + 2e-3;
       this.exposure.snapTo(L0);
     } else {
+      this.dome.mesh.visible = true;
       this.nWorld = new NewtonianWorld(def);
       this.nView = new NewtonianView(this.nWorld, this.bb, this.exposureU);
       this.celestial.add(this.nView.group);
@@ -342,10 +345,9 @@ export class App {
     if (this.kWorld && this.kView) {
       const ext = this.view === 'external';
       this.kView.renderSky(r, ext, exposure);
-      this.dome.useTraced(this.kView.tracer.cube.texture);
-      cs.uEnv.value = this.kView.tracer.cube.texture;
+      cs.uEnv.value = this.kView.probe.target.texture;
       cs.uEnvMode.value = 1;
-      cs.uEnvMip.value = Math.log2(this.kView.tracer.size) - 1;
+      cs.uEnvMip.value = 4;
       cs.uKeyE.value.set(0, 0, 0);
       cs.uFillE.value.set(0, 0, 0);
       if (ext) this.kView.updateExternal(r, exposure);
@@ -388,8 +390,7 @@ export class App {
 
   private renderDual(exposure: number) {
     const r = this.renderer;
-    const cube = this.kView!.renderOther(r, this.view === 'external', exposure);
-    this.dome2.useTraced(cube);
+    this.kView!.renderOther(r, this.view === 'external', exposure);
     const W = window.innerWidth, H = window.innerHeight;
     const w = Math.round(W * 0.32), h = Math.round(H * 0.32);
     r.setScissorTest(true);

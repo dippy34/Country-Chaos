@@ -165,6 +165,24 @@ export class KerrWorld {
     return Math.pow(F / SIGMA_SB + 81, 0.25);
   }
 
+  /** Attitude-free camera state for the lensing map, plus attitude and metric pieces for shading. */
+  viewState(externalView: boolean) {
+    const pos = externalView ? this.observer.pos : this.ship.pos;
+    const ref = externalView ? this.observer.refTetrad : bodyTetrad(this.k, pos, this.ship.uCov, [0, 0, 0, 1]);
+    const q = externalView ? this.observer.q : this.ship.q;
+    const m = new THREE.Matrix4().makeRotationFromQuaternion(new THREE.Quaternion(q[0], q[1], q[2], q[3]));
+    const att = new THREE.Matrix3().setFromMatrix4(m);
+    const p = ref.point;
+    return {
+      ref: ref.e as unknown as number[][],
+      pos: [pos[0], pos[1], pos[2]],
+      att,
+      f: p.f,
+      l: [p.lx, p.ly, p.lz] as [number, number, number],
+      t: externalView ? this.observerT : this.ship.s[0],
+    };
+  }
+
   tetradForCamera(externalView: boolean) {
     if (externalView) return { e: this.observer.tetrad.e, pos: this.observer.pos, t: this.observerT };
     const t = this.ship.tetrad();

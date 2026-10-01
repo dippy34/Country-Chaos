@@ -22,37 +22,8 @@ import { BB_GLSL, toHalf } from './blackbody';
 import { CUBE_GLSL, NOISE_GLSL } from './glsl';
 import { FULLSCREEN_VERT, fullscreenTriangle } from './skyGen';
 
-export const KERR_TRACE_FRAG = /* glsl */ `
-precision highp float;
-uniform int uFace;            // 0..5 cube face, 6 = perspective (telescope)
-uniform vec2 uRes;
-uniform mat3 uPersp;          // perspective: columns = right, up, back (observer body frame)
-uniform vec2 uTanHalf;
-uniform vec4 uE0;
-uniform vec4 uE1;
-uniform vec4 uE2;
-uniform vec4 uE3;
-uniform vec3 uCamPos;
-uniform float uCamT;
-uniform float uSpin;
-uniform float uRplus;
-uniform float uDiskIn;
-uniform float uDiskOut;
-uniform int uDiskOn;
-uniform sampler2D uDiskTemp;  // normalised T(r) on log r grid [uDiskIn, uDiskOut]
-uniform float uDiskTmax;
-uniform sampler2D uBB;
-uniform samplerCube uSky;
-uniform mat3 uSkyRot;         // KS frame → galactic sky frame
-uniform float uExposure;
-uniform int uMaxSteps;
-uniform float uStepScale;
-uniform float uFarR;
-uniform float uPixelAngle;
-${CUBE_GLSL}
-${NOISE_GLSL}
-${BB_GLSL}
-
+/** Kerr–Schild geometry helpers (GLSL). Needs `uniform float uSpin;` declared first; call `A2 = uSpin*uSpin` in main. */
+export const KERR_GLSL = /* glsl */ `
 float A2;
 
 float ksR(vec3 x) {
@@ -134,6 +105,40 @@ vec3 asymptoticDir(vec3 x, vec3 v) {
   return normalize(v - defl * bvec / b);
 }
 
+`;
+
+export const KERR_TRACE_FRAG = /* glsl */ `
+precision highp float;
+uniform int uFace;            // 0..5 cube face, 6 = perspective (telescope)
+uniform vec2 uRes;
+uniform mat3 uPersp;          // perspective: columns = right, up, back (observer body frame)
+uniform vec2 uTanHalf;
+uniform vec4 uE0;
+uniform vec4 uE1;
+uniform vec4 uE2;
+uniform vec4 uE3;
+uniform vec3 uCamPos;
+uniform float uCamT;
+uniform float uSpin;
+uniform float uRplus;
+uniform float uDiskIn;
+uniform float uDiskOut;
+uniform int uDiskOn;
+uniform sampler2D uDiskTemp;  // normalised T(r) on log r grid [uDiskIn, uDiskOut]
+uniform float uDiskTmax;
+uniform sampler2D uBB;
+uniform samplerCube uSky;
+uniform mat3 uSkyRot;         // KS frame → galactic sky frame
+uniform float uExposure;
+uniform int uMaxSteps;
+uniform float uStepScale;
+uniform float uFarR;
+uniform float uPixelAngle;
+${CUBE_GLSL}
+${NOISE_GLSL}
+${BB_GLSL}
+
+${KERR_GLSL}
 vec3 diskEmission(vec3 xi, float rd, vec3 p, float pt, float tEmit, float footprint) {
   float a = uSpin;
   float Om = 1.0 / (pow(rd, 1.5) + a);

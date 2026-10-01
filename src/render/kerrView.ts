@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { KerrWorld } from '../world/kerrWorld';
 import { KerrTracer, diskTempTexture } from './kerrTracer';
+import { LensingMap, LensingScene, LightProbe, applyShadeState, makeKerrDome, makeNoiseTexture } from './lensing';
 import { ShipModel } from './shipModel';
 import { bodyTetrad } from '../physics/frames';
 import { dot, ksPoint } from '../physics/kerr';
@@ -13,25 +14,35 @@ import { blackbody } from './blackbody';
 import { gravLength } from '../physics/constants';
 
 export interface Quality {
-  cube: number;
+  /** lensing-map face resolution (geometry; shading is always per display pixel) */
+  map: number;
+  /** cube faces traced per frame (6 = whole map every frame) */
+  faces: number;
   steps: number;
   h: number;
   /** fbm octave budget for planet/star surfaces */
   octaves: number;
+  /** telescope trace resolution and refresh divisor */
+  telescope: number;
 }
 
 export const QUALITY: Record<string, Quality> = {
-  low: { cube: 192, steps: 240, h: 0.06, octaves: 5 },
-  medium: { cube: 320, steps: 360, h: 0.045, octaves: 7 },
-  high: { cube: 512, steps: 500, h: 0.035, octaves: 10 },
-  ultra: { cube: 768, steps: 700, h: 0.028, octaves: 12 },
+  low: { map: 224, faces: 1, steps: 260, h: 0.055, octaves: 5, telescope: 192 },
+  medium: { map: 320, faces: 2, steps: 360, h: 0.045, octaves: 7, telescope: 256 },
+  high: { map: 448, faces: 6, steps: 500, h: 0.035, octaves: 10, telescope: 384 },
+  ultra: { map: 640, faces: 6, steps: 700, h: 0.028, octaves: 12, telescope: 512 },
 };
 
 export class KerrView {
+  /** Full-radiance tracer, used only for the narrow telescope view. */
   tracer: KerrTracer;
-  /** Optional second tracer for the desktop dual view. */
-  tracer2: KerrTracer | null = null;
-  readonly telescopeRT = new THREE.WebGLRenderTarget(384, 384, { type: THREE.HalfFloatType });
+  readonly pilotMap: LensingMap;
+  readonly obsMap: LensingMap;
+  readonly dome: ReturnType<typeof makeKerrDome>;
+  /** Second dome for the desktop dual view (shows the other observer). */
+  readonly dome2: ReturnType<typeof makeKerrDome>;
+  readonly probe: LightProbe;
+  telescopeRT = new THREE.WebGLRenderTarget(384, 384, { type: THREE.HalfFloatType });
   readonly telescopePanel: THREE.Mesh;
   readonly marker: THREE.Mesh;
   readonly ship: ShipModel;
@@ -40,10 +51,25 @@ export class KerrView {
   telescopeZoom = 1;
   image: ReturnType<KerrWorld['observer']['imageAt']> = null;
   private diskTex: THREE.DataTexture;
+  private noise: THREE.DataTexture;
+  private quality: Quality;
+  private frame = 0;
 
   constructor(private world: KerrWorld, private bb: THREE.Texture, private sky: THREE.Texture, quality: Quality) {
+    this.quality = quality;
     this.diskTex = diskTempTexture(world.disk.T, world.disk.Tmax);
+    this.noise = makeNoiseTexture(256);
     this.tracer = this.makeTracer(quality);
+    const scene = this.lensingScene();
+    this.pilotMap = new LensingMap(quality.map, scene);
+    this.obsMap = new LensingMap(quality.map, scene);
+    for (const m of [this.pilotMap, this.obsMap]) m.setQuality(quality.steps, quality.h);
+    this.pilotMap.facesPerFrame = quality.faces;
+    const tex = { sky, bb, diskTemp: this.diskTex, noise: this.noise };
+    this.dome = makeKerrDome(tex, scene, world.disk.Tmax);
+    this.dome2 = makeKerrDome(tex, scene, world.disk.Tmax);
+    this.probe = new LightProbe(tex, scene, world.disk.Tmax, 32);
+    this.telescopeRT.setSize(quality.telescope, quality.telescope);
     const panelMat = new THREE.MeshBasicMaterial({ map: this.telescopeRT.texture, toneMapped: true });
     this.telescopePanel = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.55), panelMat);
     const frame = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.66), new THREE.MeshBasicMaterial({ color: 0x0b1118, toneMapped: false }));
@@ -60,9 +86,14 @@ export class KerrView {
     this.shipScene.add(this.ship.group);
   }
 
+  private lensingScene(): LensingScene {
+    const w = this.world;
+    return { spin: w.k.a, rPlus: w.rPlus, diskOn: w.diskOn, diskIn: w.disk.rIn, diskOut: w.disk.rOut, skyRot: w.skyRot };
+  }
+
   private makeTracer(q: Quality) {
     const w = this.world;
-    const t = new KerrTracer(q.cube, {
+    const t = new KerrTracer(16, {
       spin: w.k.a, rPlus: w.rPlus, diskOn: w.diskOn, diskIn: w.disk.rIn, diskOut: w.disk.rOut, diskTmax: w.disk.Tmax,
       diskTemp: this.diskTex, sky: this.sky, bb: this.bb, skyRot: w.skyRot,
     });
@@ -71,29 +102,56 @@ export class KerrView {
   }
 
   setQuality(q: Quality) {
-    this.tracer.resize(q.cube);
+    this.quality = q;
     this.tracer.setQuality(q.steps, q.h);
-    this.tracer2?.resize(Math.min(q.cube, 256));
+    for (const m of [this.pilotMap, this.obsMap]) {
+      m.resize(q.map);
+      m.setQuality(q.steps, q.h);
+    }
+    this.pilotMap.facesPerFrame = q.faces;
+    this.telescopeRT.setSize(q.telescope, q.telescope);
   }
 
   setDisk(on: boolean) {
     this.tracer.setParams({ diskOn: on });
-    this.tracer2?.setParams({ diskOn: on });
-  }
-
-  /** Trace the sky for the active observer. */
-  renderSky(renderer: THREE.WebGLRenderer, external: boolean, exposure: number) {
-    this.tracer.setCamera(this.world.tetradForCamera(external), exposure);
-    this.tracer.renderCube(renderer);
-  }
-
-  renderOther(renderer: THREE.WebGLRenderer, external: boolean, exposure: number) {
-    if (!this.tracer2) {
-      this.tracer2 = this.makeTracer({ cube: 192, steps: 300, h: 0.05, octaves: 5 });
+    for (const m of [this.pilotMap, this.obsMap]) {
+      m.setDisk(on);
+      m.frontCam = null; // force a full re-trace
     }
-    this.tracer2.setCamera(this.world.tetradForCamera(!external), exposure);
-    this.tracer2.renderCube(renderer);
-    return this.tracer2.cube.texture;
+  }
+
+  private mapCamera(external: boolean) {
+    const v = this.world.viewState(external);
+    return { e: v.ref, pos: v.pos, t: v.t };
+  }
+
+  private shade(u: Parameters<typeof applyShadeState>[0], external: boolean, exposure: number) {
+    const v = this.world.viewState(external);
+    applyShadeState(u, { map: external ? this.obsMap : this.pilotMap, att: v.att, ref: v.ref, f: v.f, l: v.l, t: v.t, exposure });
+  }
+
+  /**
+   * Advance the lensing map for the active observer and update the dome and
+   * light probe. The external observer is static, so its map is traced once.
+   */
+  renderSky(renderer: THREE.WebGLRenderer, external: boolean, exposure: number) {
+    this.frame++;
+    if (external) {
+      if (!this.obsMap.frontCam) this.obsMap.update(renderer, () => this.mapCamera(true), true);
+    } else {
+      this.pilotMap.update(renderer, () => this.mapCamera(false), !this.pilotMap.frontCam);
+    }
+    this.shade(this.dome.uniforms, external, exposure);
+    this.shade(this.probe.uniforms, external, exposure);
+    this.probe.update(renderer, 1);
+  }
+
+  /** Desktop dual view: the other observer's sky into dome2. */
+  renderOther(renderer: THREE.WebGLRenderer, external: boolean, exposure: number) {
+    const other = !external;
+    const map = other ? this.obsMap : this.pilotMap;
+    if (!map.frontCam || !other) map.update(renderer, () => this.mapCamera(other), !map.frontCam);
+    this.shade(this.dome2.uniforms, other, exposure);
   }
 
   /** External observer: solve the retarded image, aim the telescope, render it. */
@@ -132,8 +190,11 @@ export class KerrView {
     const gainMax = exposure * 1e6;
     const telExposure = Math.min(0.25 / Lhull, gainMax);
 
-    this.tracer.setCamera({ e: w.observer.tetrad.e, pos: w.observer.pos, t: w.observerT }, telExposure);
-    this.tracer.renderPerspective(renderer, this.telescopeRT, basis, Math.tan(fov / 2));
+    // the telescope trace is the expensive part; on headsets refresh it every third frame
+    if (this.quality.faces >= 6 || this.frame % 3 === 0) {
+      this.tracer.setCamera({ e: w.observer.tetrad.e, pos: w.observer.pos, t: w.observerT }, telExposure);
+      this.tracer.renderPerspective(renderer, this.telescopeRT, basis, Math.tan(fov / 2));
+    }
 
     // ship orientation as seen: TRIAD alignment of (photon direction, spin axis) between frames
     const sample = img.a;
@@ -208,8 +269,13 @@ export class KerrView {
   dispose() {
     this.tracer.cube.dispose();
     this.tracer.material.dispose();
-    this.tracer2?.cube.dispose();
+    this.pilotMap.dispose();
+    this.obsMap.dispose();
+    this.probe.dispose();
+    this.dome.material.dispose();
+    this.dome2.material.dispose();
     this.telescopeRT.dispose();
     this.diskTex.dispose();
+    this.noise.dispose();
   }
 }
