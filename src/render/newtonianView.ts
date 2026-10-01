@@ -192,6 +192,11 @@ export class NewtonianView {
     return out;
   }
 
+  /** Procedural detail budget (octaves) for the current quality level. */
+  setOctaves(n: number) {
+    for (const v of this.vis) v.mat.uniforms.uOct.value = n;
+  }
+
   dispose() {
     for (const v of this.vis) {
       v.mat.dispose();

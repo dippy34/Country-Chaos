@@ -24,7 +24,7 @@ metric, not animated.
 | ![External observer](docs/images/sgra-external.png) **External observer view** with tracking telescope | ![Lensing](docs/images/lensing-no-disk.png) Lensed Milky Way and shadow (disk off) |
 | ![Inside the horizon looking out](docs/images/inside-looking-out.png) Inside the horizon, looking out: the screen does not go black | ![Inside the horizon looking in](docs/images/inside-looking-in.png) Inside the horizon, looking toward the hole |
 | ![Jupiter from 350,000 km](docs/images/jupiter-350k.png) Jupiter from 350,000 km | ![Jupiter from 10,600 km](docs/images/jupiter-10k.png) 10,600 km above Jupiter's clouds: 121° across |
-| ![Betelgeuse](docs/images/betelgeuse.png) Betelgeuse from 12 AU | ![M87*](docs/images/m87.png) M87* |
+| ![Betelgeuse](docs/images/betelgeuse.png) Betelgeuse from 14 AU | ![M87*](docs/images/m87.png) M87* |
 
 *(Captured headlessly with a software renderer at reduced quality; a real GPU renders sharper.)*
 
@@ -33,7 +33,7 @@ metric, not animated.
 ```bash
 npm install
 npm run dev          # http://localhost:5173  (desktop: mouse + keyboard)
-npm test             # 24 physics/photometry validation tests
+npm test             # 27 physics/photometry validation tests
 npm run build        # static site in dist/
 ```
 

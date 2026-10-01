@@ -16,13 +16,15 @@ export interface Quality {
   cube: number;
   steps: number;
   h: number;
+  /** fbm octave budget for planet/star surfaces */
+  octaves: number;
 }
 
 export const QUALITY: Record<string, Quality> = {
-  low: { cube: 192, steps: 240, h: 0.06 },
-  medium: { cube: 320, steps: 360, h: 0.045 },
-  high: { cube: 512, steps: 500, h: 0.035 },
-  ultra: { cube: 768, steps: 700, h: 0.028 },
+  low: { cube: 192, steps: 240, h: 0.06, octaves: 5 },
+  medium: { cube: 320, steps: 360, h: 0.045, octaves: 7 },
+  high: { cube: 512, steps: 500, h: 0.035, octaves: 10 },
+  ultra: { cube: 768, steps: 700, h: 0.028, octaves: 12 },
 };
 
 export class KerrView {
@@ -87,7 +89,7 @@ export class KerrView {
 
   renderOther(renderer: THREE.WebGLRenderer, external: boolean, exposure: number) {
     if (!this.tracer2) {
-      this.tracer2 = this.makeTracer({ cube: 192, steps: 300, h: 0.05 });
+      this.tracer2 = this.makeTracer({ cube: 192, steps: 300, h: 0.05, octaves: 5 });
     }
     this.tracer2.setCamera(this.world.tetradForCamera(!external), exposure);
     this.tracer2.renderCube(renderer);

@@ -20,8 +20,8 @@ in-game **"What you are seeing"** panel shows the same three-tier classification
   singularity, as they would in Boyer–Lindquist coordinates.
 * Geometric units with `M = 1` internally. SI comes from `GM/c²` (length), `GM/c³` (time),
   and `(GM/c³)⁻²` (tidal tensor).
-* Mass, spin `a/M ∈ [0, 0.998]`, spin-axis orientation, disk on/off and accretion rate can all
-  be changed per hole (desktop panel).
+* Mass, spin `a/M ∈ [0, 0.998]`, spin-axis tilt relative to the galaxy, disk on/off and
+  accretion rate can all be changed per hole (desktop panel).
 
 ### 1.2 Geodesics — *established* (integrator: *approximated*)
 * Super-Hamiltonian `H = ½ g^{μν} p_μ p_ν` with an **analytic metric gradient**: no finite
@@ -88,8 +88,9 @@ GPU tracer, `src/render/kerrTracer.ts`:
   re-seeded every two orbits to bound shear.
 * **Accretion rates are chosen for survivability.** The disk's light heats the hull through
   `F = L/(4πd²)`, and an actively accreting hole (even 1 % of Eddington at Sgr A*) would
-  vaporise the ship many radii out. Default rates are therefore 10⁻¹³ to 10⁻⁴ Eddington,
-  which gives ~3,000–5,500 K disks. Hotter disks are available on the slider, and they heat you.
+  vaporise the ship many radii out. Default rates are therefore 10⁻¹³ to 3×10⁻⁴ Eddington,
+  which gives ~3,500–5,500 K peak temperatures. Hotter disks are available on the slider,
+  and they heat you.
 * Bigger holes have cooler disks (`T ∝ M^{-¼}`), so the colour palette varies physically
   from hole to hole.
 * Real Sgr A* and M87* host hot, radiatively inefficient flows rather than thin disks. Their
@@ -189,6 +190,8 @@ GPU tracer, `src/render/kerrTracer.ts`:
 
 ## 3. Light, exposure and display — *approximated (physically motivated)*
 
+* Display transform: Khronos PBR Neutral tone mapping, which preserves hue, so blackbody
+  colours (orange supergiants, red-shifted disks) are not bleached; `?tm=agx|aces` switches it.
 * All shading is in **cd/m²**, from Planck spectra integrated against CIE 1931 matching
   functions (`src/render/blackbody.ts`; a 5772 K blackbody gives about 2×10⁹ cd/m², as the
   test checks).

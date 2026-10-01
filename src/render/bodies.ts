@@ -44,6 +44,7 @@ uniform float uRadius;      // equatorial radius (m)
 uniform float uPixelAngle;  // rad per pixel (approx)
 uniform vec4 uOcc[4];       // occluders: centre (body-fixed, radii) + radius (radii)
 uniform int uOccN;
+uniform int uOct;           // octave budget from the quality setting (VR performance)
 varying vec3 vWorld;
 ${NOISE_GLSL}
 ${BB_GLSL}
@@ -119,18 +120,18 @@ vec3 jupiterAlbedo(vec3 n, float footprint) {
     vec3 p = vec3(c * n.x - s * n.y, s * n.x + c * n.y, n.z) + floor(ph) * 3.7;
     // anisotropic turbulence: stretched along longitude
     vec3 q = p * vec3(6.0, 6.0, 26.0);
-    vec3 warp = vec3(fbm(q * 0.7, 5, footprint * 6.0), fbm(q * 0.7 + 7.1, 5, footprint * 6.0), 0.0) - 0.5;
-    float turb = smoothstep(0.25, 0.75, fbm(q + warp * 3.0, 11, footprint * 26.0));
-    float fine = smoothstep(0.2, 0.8, fbm(q * 6.0 + warp * 8.0, 8, footprint * 160.0));
+    vec3 warp = vec3(fbm(q * 0.7, min(5, uOct), footprint * 6.0), fbm(q * 0.7 + 7.1, min(5, uOct), footprint * 6.0), 0.0) - 0.5;
+    float turb = smoothstep(0.25, 0.75, fbm(q + warp * 3.0, min(11, uOct), footprint * 26.0));
+    float fine = smoothstep(0.2, 0.8, fbm(q * 6.0 + warp * 8.0, min(8, uOct), footprint * 160.0));
     float latp = lat + 0.035 * (turb - 0.5) + 0.006 * (fine - 0.5);
     float belt = bandProfile(latp);
     vec3 zone = mix(vec3(0.92, 0.86, 0.74), vec3(0.98, 0.95, 0.88), fine);
     vec3 beltC = mix(vec3(0.50, 0.30, 0.18), vec3(0.70, 0.50, 0.33), turb);
     vec3 col = mix(zone, beltC, belt);
     // eddies and filaments within bands
-    float eddy = smoothstep(0.42, 0.62, fbm(q * 2.3 + warp * 6.0 + 11.0, 9, footprint * 60.0));
+    float eddy = smoothstep(0.42, 0.62, fbm(q * 2.3 + warp * 6.0 + 11.0, min(9, uOct), footprint * 60.0));
     // thin bright/dark filaments (ridged turbulence)
-    float fil = 1.0 - abs(2.0 * fbm(q * 4.1 + warp * 10.0 + 23.0, 9, footprint * 110.0) - 1.0);
+    float fil = 1.0 - abs(2.0 * fbm(q * 4.1 + warp * 10.0 + 23.0, min(9, uOct), footprint * 110.0) - 1.0);
     col *= 0.85 + 0.3 * smoothstep(0.75, 0.95, fil);
     col = mix(col, col * vec3(0.78, 0.7, 0.62), eddy * 0.55);
     col *= 0.78 + 0.44 * mix(turb, fine, 0.45);
@@ -157,8 +158,8 @@ vec3 jupiterAlbedo(vec3 n, float footprint) {
 
 vec3 moonAlbedo(vec3 n, float footprint) {
   vec3 p = n * 4.0;
-  float a = fbm(p, 9, footprint * 4.0);
-  float b = fbm(p * 3.0 + 11.0, 8, footprint * 12.0);
+  float a = fbm(p, min(9, uOct), footprint * 4.0);
+  float b = fbm(p * 3.0 + 11.0, min(8, uOct), footprint * 12.0);
   if (uStyle == 1) { // Io: sulfur plains, red rings, dark paterae
     vec3 col = mix(vec3(0.92, 0.84, 0.45), vec3(0.95, 0.93, 0.8), smoothstep(0.4, 0.7, a));
     col = mix(col, vec3(0.75, 0.38, 0.2), smoothstep(0.62, 0.72, b) * 0.6);
@@ -169,7 +170,7 @@ vec3 moonAlbedo(vec3 n, float footprint) {
     return col;
   }
   if (uStyle == 2) { // Europa: bright ice with reddish lineae
-    float lines = 1.0 - smoothstep(0.0, 0.035, abs(fbm(p * vec3(1.0, 2.0, 1.0) + 3.0, 7, footprint * 6.0) - 0.5));
+    float lines = 1.0 - smoothstep(0.0, 0.035, abs(fbm(p * vec3(1.0, 2.0, 1.0) + 3.0, min(7, uOct), footprint * 6.0) - 0.5));
     float lines2 = 1.0 - smoothstep(0.0, 0.02, abs(b - 0.5));
     vec3 col = mix(vec3(0.9, 0.87, 0.8), vec3(0.78, 0.7, 0.6), a * 0.6);
     return mix(col, vec3(0.55, 0.32, 0.2), max(lines, lines2) * 0.7);
@@ -303,12 +304,13 @@ vec2 worley(vec3 p) {
   return vec2(f1, f2);
 }
 
-float granulation(vec3 n, float freq, float footprint, float tphase) {
+float granulation(vec3 n, float freq, float footprint, float tphase, float lane) {
   float lod = footprint * freq;
   if (lod > 1.2) return 0.5;
   vec3 q = n * freq + vec3(0.0, 0.0, tphase);
-  vec2 w = worley(q + 0.15 * (vec3(vnoise(q * 0.5), vnoise(q * 0.5 + 9.0), 0.0) - 0.5));
-  float g = smoothstep(0.0, 0.5, w.y - w.x);       // bright cell interiors, dark lanes
+  vec2 w = worley(q + 0.35 * (vec3(vnoise(q * 0.7), vnoise(q * 0.7 + 9.0), vnoise(q * 0.7 + 4.0)) - 0.5));
+  // bright upflowing cell interiors, darker cooler intergranular lanes
+  float g = smoothstep(0.0, lane, w.y - w.x) * (1.0 - 0.6 * smoothstep(0.2, 0.9, w.x));
   return mix(g, 0.5, smoothstep(0.4, 1.2, lod));
 }
 
@@ -328,8 +330,8 @@ void main() {
   float bright = 1.0;
   if (uStarStyle == 0) {
     // granules (~1,000 km) evolving over ~10 min, supergranules (~30,000 km)
-    float g = granulation(n, 1.0 / uCellSize, footprint, uTime / 600.0);
-    float sg = fbm(n * 25.0 + uTime * 1e-6, 5, footprint * 25.0);
+    float g = granulation(n, 1.0 / uCellSize, footprint, uTime / 600.0, 0.5);
+    float sg = fbm(n * 25.0 + uTime * 1e-6, min(5, uOct), footprint * 25.0);
     T *= 1.0 + 0.035 * (g - 0.5) + 0.01 * (sg - 0.5);
     // a few sunspots
     for (int i = 0; i < 3; i++) {
@@ -339,16 +341,19 @@ void main() {
       vec3 c = vec3(cos(lat) * cos(lon), cos(lat) * sin(lon), sin(lat));
       float r = acos(clamp(dot(n, c), -1.0, 1.0)) / (0.012 + 0.02 * h.z);
       float umbra = 1.0 - smoothstep(0.35, 0.5, r);
-      float pen = 1.0 - smoothstep(0.8, 1.0, r + 0.1 * fbm(n * 300.0, 4, footprint * 300.0));
+      float pen = 1.0 - smoothstep(0.8, 1.0, r + 0.1 * fbm(n * 300.0, min(4, uOct), footprint * 300.0));
       T = mix(T, 4200.0, pen * 0.6);
       T = mix(T, 3600.0, umbra);
     }
   } else {
     // red supergiant: a handful of enormous convection cells plus smaller ones
-    float big = granulation(n, 2.2, footprint, uTime / (86400.0 * 200.0));
-    float mid = granulation(n, 9.0, footprint, uTime / (86400.0 * 40.0) + 3.0);
-    float small = fbm(n * 60.0, 6, footprint * 60.0);
-    T *= 1.0 + 0.09 * (big - 0.5) + 0.05 * (mid - 0.5) + 0.02 * (small - 0.5);
+    // red supergiant: a handful of convection cells comparable to the stellar radius
+    // (cf. 3D RHD models, Freytag/Chiavassa) with blotchy, irregular plumes
+    vec3 wq = n * 1.6 + 0.6 * (vec3(fbm(n * 2.0, 4, footprint * 2.0), fbm(n * 2.0 + 5.0, 4, footprint * 2.0), fbm(n * 2.0 + 9.0, 4, footprint * 2.0)) - 0.5);
+    float big = granulation(normalize(wq), 2.0, footprint, uTime / (86400.0 * 200.0), 1.4);
+    float mid = fbm(n * 7.0 + big * 2.0, min(7, uOct), footprint * 7.0);
+    float small = fbm(n * 45.0, min(6, uOct), footprint * 45.0);
+    T *= 1.0 + 0.16 * (big - 0.5) + 0.09 * (mid - 0.5) + 0.03 * (small - 0.5);
   }
   // limb darkening (quadratic law); cooler, redder limb
   float limb = 0.3 + 0.93 * mu - 0.23 * mu * mu;
@@ -418,6 +423,7 @@ function baseUniforms(bb: THREE.Texture): BodyUniforms {
     uPixelAngle: { value: 0.0015 },
     uOcc: { value: [0, 1, 2, 3].map(() => new THREE.Vector4(0, 0, 0, 0)) },
     uOccN: { value: 0 },
+    uOct: { value: 11 },
   };
 }
 

@@ -68,7 +68,8 @@ export class App {
     this.renderer = r;
     r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     r.setSize(window.innerWidth, window.innerHeight);
-    r.toneMapping = THREE.AgXToneMapping;
+    // hue-preserving display transform keeps blackbody colours (orange supergiants, red-shifted disks) honest
+    r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1;
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.xr.enabled = true;
@@ -76,6 +77,9 @@ export class App {
     r.xr.setFoveation(1);
     this.container.appendChild(r.domElement);
     const q = new URLSearchParams(location.search);
+    const tm = q.get('tm');
+    if (tm === 'agx') r.toneMapping = THREE.AgXToneMapping;
+    if (tm === 'aces') r.toneMapping = THREE.ACESFilmicToneMapping;
     if (q.get('quality') && q.get('quality')! in QUALITY) this.quality = q.get('quality') as keyof typeof QUALITY;
     const vrButton = VRButton.createButton(r);
     document.body.appendChild(vrButton);
@@ -164,6 +168,7 @@ export class App {
       this.nWorld = new NewtonianWorld(def);
       this.nView = new NewtonianView(this.nWorld, this.bb, this.exposureU);
       this.celestial.add(this.nView.group);
+      this.nView.setOctaves(QUALITY[this.quality].octaves);
       this.nWorld.thrustG = THRUSTS[this.thrustIdx];
       this.exposure.snapTo(0.05);
       this.setView('pilot');
@@ -206,6 +211,7 @@ export class App {
   setQuality(q: keyof typeof QUALITY) {
     this.quality = q;
     this.kView?.setQuality(QUALITY[q]);
+    this.nView?.setOctaves(QUALITY[q].octaves);
     (document.getElementById('quality') as HTMLSelectElement).value = q;
   }
 
@@ -403,7 +409,7 @@ export class App {
   private adaptQuality(dt: number, presenting: boolean) {
     this.frameAvg = this.frameAvg * 0.95 + dt * 1000 * 0.05;
     const budget = presenting ? 1000 / 72 : 1000 / 45;
-    if (this.kView && this.frameAvg > budget * 1.25) {
+    if (this.frameAvg > budget * 1.25) {
       if (++this.slowFrames > 90) {
         const order: (keyof typeof QUALITY)[] = ['ultra', 'high', 'medium', 'low'];
         const i = order.indexOf(this.quality);
@@ -461,17 +467,24 @@ export class App {
     const mass = document.getElementById('mass') as HTMLInputElement;
     const disk = document.getElementById('disk') as HTMLInputElement;
     const acc = document.getElementById('acc') as HTMLInputElement;
+    const tilt = document.getElementById('tilt') as HTMLInputElement;
     const upd = () => {
+      document.getElementById('tiltv')!.textContent = `${((parseFloat(tilt.value) * 180) / Math.PI).toFixed(0)}°`;
       document.getElementById('spinv')!.textContent = parseFloat(spin.value).toFixed(3);
       document.getElementById('massv')!.textContent = (10 ** parseFloat(mass.value)).toExponential(2);
       document.getElementById('accv')!.textContent = (10 ** parseFloat(acc.value)).toExponential(0);
     };
-    spin.oninput = mass.oninput = acc.oninput = upd;
+    spin.oninput = mass.oninput = acc.oninput = tilt.oninput = upd;
     document.getElementById('applyBh')!.onclick = () => {
       if (this.current.kind !== 'kerr') return;
       const i = this.systems.indexOf(this.current);
       const acc = document.getElementById('acc') as HTMLInputElement;
-      const def: KerrSystemDef = { ...this.current, spin: parseFloat(spin.value), massSolar: 10 ** parseFloat(mass.value), disk: disk.checked, eddington: 10 ** parseFloat(acc.value) };
+      const tilt = document.getElementById('tilt') as HTMLInputElement;
+      const o = this.current.orientation;
+      const def: KerrSystemDef = {
+        ...this.current, spin: parseFloat(spin.value), massSolar: 10 ** parseFloat(mass.value), disk: disk.checked,
+        eddington: 10 ** parseFloat(acc.value), orientation: [parseFloat(tilt.value), o[1], o[2]],
+      };
       this.systems[i] = def;
       this.loadSystem(def);
     };
@@ -489,6 +502,7 @@ export class App {
       (document.getElementById('mass') as HTMLInputElement).value = String(Math.log10(this.current.massSolar));
       (document.getElementById('disk') as HTMLInputElement).checked = this.current.disk;
       (document.getElementById('acc') as HTMLInputElement).value = String(Math.log10(this.current.eddington));
+      (document.getElementById('tilt') as HTMLInputElement).value = String(this.current.orientation[0]);
       (document.getElementById('spin') as HTMLInputElement).dispatchEvent(new Event('input'));
     }
   }

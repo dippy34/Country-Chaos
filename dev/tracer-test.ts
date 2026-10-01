@@ -50,7 +50,7 @@ const mat = new THREE.ShaderMaterial({
 const scene = new THREE.Scene();
 scene.add(new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), mat));
 const cam = new THREE.PerspectiveCamera(parseFloat(q.get('fov') ?? '70'), W / H, 0.1, 100);
-renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.render(scene, cam);
 (window as any).__done = true;
 console.log('Tmax', prof.Tmax, 'rIn', prof.rIn);

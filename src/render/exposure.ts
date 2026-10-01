@@ -29,7 +29,7 @@ interface Meter {
 export class AutoExposure {
   exposure = 1;
   measuredL = 0;
-  key = 0.16;
+  key = 0.2;
   floorL = 1.5e-3;
   bias = 1;
   minExposure = 1e-14;
@@ -131,7 +131,7 @@ export class AutoExposure {
     let s = 0;
     const n = m.size * m.size;
     for (let i = 0; i < n; i++) s += this.lum(m, i * 4, used);
-    return s / n / 1.5;
+    return s / n / 3;
   }
 
   private combine() {
