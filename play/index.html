@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lightcone — relativistic VR flight</title>
+  <script type="module" crossorigin src="./assets/index-BB6ITAvS.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-DZztrnfR.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="overlay"></div>
+  <div id="panel">
+    <h1>LIGHTCONE</h1>
+    <div class="sub">relativistic VR flight · true scale</div>
+    <div id="dests"></div>
+    <div id="bh">
+      <label>Spin a/M <input id="spin" type="range" min="0" max="0.998" step="0.001" /> <span id="spinv"></span></label>
+      <label>Mass (M☉, log₁₀) <input id="mass" type="range" min="0.5" max="11" step="0.05" /> <span id="massv"></span></label>
+      <label>Spin-axis tilt <input id="tilt" type="range" min="0" max="3.1416" step="0.01" /> <span id="tiltv"></span></label>
+      <label>Accretion (Eddington, log₁₀) <input id="acc" type="range" min="-14" max="0" step="0.5" /> <span id="accv"></span></label>
+      <label><input id="disk" type="checkbox" /> accretion disk</label>
+      <div class="sub">Brighter disks are hotter (T ∝ ṁ^¼ M^−¼) — and their light heats your hull.</div>
+      <button id="applyBh">Apply black-hole parameters</button>
+    </div>
+    <label>Quality <select id="quality"><option>low</option><option>medium</option><option selected>high</option><option>ultra</option></select></label>
+    <div id="help">
+      <b>Desktop</b> W/S thrust · A/D strafe · R/F up/down · ↑↓←→ pitch/yaw · Q/E roll · drag = look around<br>
+      [ ] engine g · , . time warp · H station-keep · G point at target · T next target<br>
+      V pilot ⇄ <b>external observer</b> · K disk · B dual view · P unmanned probe · Backspace reset · 1–7 destinations<br>
+      <b>VR</b> right trigger thrust · left trigger retro · left stick translate · right stick pitch/yaw · grips roll<br>
+      A view · B warp+ · X warp− · Y menu · left-stick click station-keep · right-stick click point at target
+    </div>
+  </div>
+  <div id="loading">Generating the sky…</div>
+</body>
+</html>
