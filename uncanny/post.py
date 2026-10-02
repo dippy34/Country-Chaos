@@ -231,7 +231,8 @@ def main():
 
     ff = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-         "-r", str(T.FPS), "-i", "-", "-i", args.audio, "-c:v", "libx264", "-preset", "slow", "-crf", "20",
+         "-r", str(T.FPS), "-i", "-", "-i", args.audio, "-c:v", "libx264", "-preset", "slow", "-crf", "23",
+         "-maxrate", "4500k", "-bufsize", "9000k",
          "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", args.out],
         stdin=subprocess.PIPE)
     for f in range(T.TOTAL):
