@@ -76,6 +76,7 @@ def nightshot(img, f, exposure):
     g = exposure(lum)
     l = 1 - np.exp(-lum * g * 1.4)
     hot = np.clip((lum - 0.93) / 0.07, 0, 1)              # eyeshine: retroreflection under IR
+    hot = hot * min(1.0, 0.004 / (hot.mean() + 1e-6))     # a face in the lens isn't all eyes
     glow = blur(np.repeat(hot[..., None], 3, 2), 12, 2)[..., :1] * 3.0
     k = f - T.NV_START
     if k < 6:                                         # sensor flares while it switches
@@ -219,7 +220,7 @@ def main():
     ap.add_argument("--only", nargs="*", type=int, help="just write these frames as PNGs to --stills")
     args = ap.parse_args()
     exposure = Exposure()
-    keep = {150: "01_far_end", 300: "02_closer", 466: "03_it_smiles", 590: "04_above_you"}
+    keep = {150: "01_far_end", 330: "02_coming", 352: "03_it_stops", 466: "04_it_smiles", 590: "05_above_you"}
 
     if args.only:
         for f in args.only:

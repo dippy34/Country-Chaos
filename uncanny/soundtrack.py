@@ -1,14 +1,18 @@
-"""Synthesises the soundtrack for THE HALLWAY from nothing but numpy.
+"""The soundtrack for THE HALLWAY.
 
     python3 uncanny/soundtrack.py out.wav
 
-Every event is read from timeline.py so it lands on the right frame:
-fluorescent hum that follows the lights, relay ticks when they sputter,
-breaker clunks, the silence when it arrives, bone cracks when its head
-jerks over, tinnitus, the operator breathing, and one very loud last second.
+Real CC0 recordings (Kenney's impact/RPG packs, and OpenGameArt packs: deep
+bone breaks, horror breathing, 80 creature vocalisations, wet squishes; see
+fetch_assets.py) bent out of shape with Rubber Band, filters and convolution,
+plus synthesis where nothing recorded would do (ballast hum, the tape itself).
+Every cue reads its frame from timeline.py.
 """
+import functools
 import os
+import subprocess
 import sys
+import tempfile
 
 import numpy as np
 from scipy.io import wavfile
@@ -19,15 +23,63 @@ import timeline as T  # noqa: E402
 
 SR = 48000
 N = int(T.TOTAL / T.FPS * SR)
+HERE = os.path.dirname(os.path.abspath(__file__))
+SFX = os.path.join(os.environ.get("HALLWAY_ASSETS", os.path.join(HERE, "assets")), "sfx", "wav")
 rng = np.random.default_rng(1317)
 
 
+# ------------------------------------------------------------------ plumbing
 def sec(f):
     return f / T.FPS
 
 
 def idx(f):
     return int(round(sec(f) * SR))
+
+
+@functools.lru_cache(None)
+def _load(name):
+    sr, x = wavfile.read(os.path.join(SFX, name + ".wav"))
+    x = x.astype(np.float32) / 32768.0
+    return x if x.ndim == 2 else np.stack([x, x], 1)
+
+
+def load(name, peak=0.9):
+    x = _load(name).copy()
+    return x * (peak / (np.abs(x).max() + 1e-9))
+
+
+def oga(name, **kw):
+    return load("oga__" + name, **kw)
+
+
+def creature(name, **kw):
+    return load("oga__80-CC0-creature-SFX_0__" + name, **kw)
+
+
+def kenney(name, **kw):
+    for pack in ("impact__Audio__", "rpg__Audio__"):
+        if os.path.exists(os.path.join(SFX, pack + name + ".wav")):
+            return load(pack + name, **kw)
+    raise FileNotFoundError(name)
+
+
+def rubber(x, tempo=1.0, semis=0.0):
+    """Rubber Band time-stretch / pitch-shift (through ffmpeg)."""
+    with tempfile.TemporaryDirectory() as d:
+        a, b = os.path.join(d, "a.wav"), os.path.join(d, "b.wav")
+        wavfile.write(a, SR, (np.clip(x, -1, 1) * 32767).astype(np.int16))
+        filt = f"rubberband=tempo={tempo}:pitch={2 ** (semis / 12)}:transients=smooth:detector=soft"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", a, "-af", filt, b], check=True)
+        return wavfile.read(b)[1].astype(np.float32) / 32768.0
+
+
+def tape(x, semis):
+    """Pitch like a slowed tape: lower and longer together."""
+    r = 2 ** (semis / 12)
+    n = int(len(x) / r)
+    t = np.arange(n) * r
+    return np.stack([np.interp(t, np.arange(len(x)), x[:, c]) for c in range(2)], 1).astype(np.float32)
 
 
 def band(x, lo=None, hi=None, order=4):
@@ -37,284 +89,416 @@ def band(x, lo=None, hi=None, order=4):
         sos = butter(order, lo, "highpass", fs=SR, output="sos")
     else:
         sos = butter(order, hi, "lowpass", fs=SR, output="sos")
-    return sosfilt(sos, x, axis=0)
+    return sosfilt(sos, x, axis=0).astype(np.float32)
 
 
 def noise(n, ch=2):
-    return rng.standard_normal((n, ch))
+    return rng.standard_normal((n, ch)).astype(np.float32)
 
 
-def frames_to_env(values, smooth_ms=4.0):
-    """Per-frame values -> per-sample envelope with a tiny de-click ramp."""
-    env = np.repeat(np.asarray(values, float), SR // T.FPS)[:N]
-    env = np.pad(env, (0, N - len(env)), mode="edge")
-    k = max(1, int(SR * smooth_ms / 1000))
-    return np.convolve(env, np.ones(k) / k, mode="same")
+def decay(n, tau):
+    return np.exp(-np.arange(n) / (tau * SR))[:, None].astype(np.float32)
+
+
+def env(n, attack=0.005, release=0.05):
+    e = np.ones(n, np.float32)
+    a, r = int(attack * SR), int(release * SR)
+    if a:
+        e[:a] = np.linspace(0, 1, a)
+    if r:
+        e[-r:] *= np.linspace(1, 0, r)
+    return e[:, None]
+
+
+def pan(x, p):
+    """p in -1 (left) .. 1 (right), constant power."""
+    a = (p + 1) * np.pi / 4
+    return x * np.array([np.cos(a), np.sin(a)], np.float32) * np.sqrt(2)
+
+
+def mono(x):
+    return np.repeat(x[:, None], 2, 1).astype(np.float32) if x.ndim == 1 else x
+
+
+def tone(freq, dur, phase=0.0):
+    t = np.arange(int(dur * SR)) / SR
+    return np.sin(2 * np.pi * np.cumsum(np.broadcast_to(freq, t.shape)) / SR + phase).astype(np.float32)
 
 
 def place(track, clip, at, gain=1.0):
-    """Mix `clip` into `track` starting at frame `at` (fractional frames are fine)."""
+    """Mix `clip` in starting at frame `at` (fractional frames allowed)."""
     a = idx(at)
+    if a < 0:
+        clip, a = clip[-a:], 0
     b = min(N, a + len(clip))
     if a < N:
         track[a:b] += clip[: b - a] * gain
 
 
-def decay(n, tau):
-    return np.exp(-np.arange(n) / (tau * SR))[:, None]
+def _ir(seconds, tau, lo=150, hi=7000, seed=0):
+    r = np.random.default_rng(seed)
+    n = int(seconds * SR)
+    ir = band(r.standard_normal((n, 2)).astype(np.float32), lo, hi) * decay(n, tau)
+    ir[: int(0.004 * SR)] = 0
+    return ir / np.abs(ir).sum(0).max() * 8
 
 
-def tone(freq, dur, phase=0.0):
-    t = np.arange(int(dur * SR)) / SR
-    return np.sin(2 * np.pi * np.cumsum(np.broadcast_to(freq, t.shape)) / SR + phase)
+HALL = _ir(2.6, 0.55, seed=1)        # the long corridor: hard walls, carpet floor
+ROOM = _ir(0.5, 0.08, 300, 9000, 2)  # right next to you
 
 
-# A small, ugly concrete corridor: two seconds of diffuse decay.
-_ir_n = int(2.0 * SR)
-IR = band(noise(_ir_n), 200, 6000) * decay(_ir_n, 0.45)
-IR[:, 1] = np.roll(IR[:, 1], 211)
-IR /= np.abs(IR).sum(axis=0).max() / 6.0
-
-
-def reverb(x, wet=0.35):
-    y = np.stack([fftconvolve(x[:, c], IR[:, c])[: len(x)] for c in range(2)], axis=1)
+def verb(x, wet=0.35, ir=HALL):
+    y = np.stack([fftconvolve(x[:, c], ir[:, c])[: len(x)] for c in range(2)], 1).astype(np.float32)
     return x * (1 - wet) + y * wet
 
 
-def mono(x):
-    return np.repeat(x[:, None], 2, axis=1) if x.ndim == 1 else x
+def far(x, metres):
+    """Push a sound down the corridor: quieter, duller, wetter."""
+    cut = float(np.clip(9000 / (1 + metres / 6), 600, 9000))
+    x = band(x, hi=cut, order=2)
+    tail = np.zeros((int(1.2 * SR), 2), np.float32)
+    return verb(np.concatenate([x, tail]), wet=float(np.clip(0.2 + metres / 30, 0.2, 0.85))) / (1 + metres / 4)
 
 
-# ------------------------------------------------------------------ elements
-def hum():
-    """60 Hz mains buzz through ten tired ballasts. Follows the lights."""
+def drive(x, amount):
+    return np.tanh(x * amount) / np.tanh(amount)
+
+
+# ------------------------------------------------------------- the building
+def room_tone():
+    """Air handling, the camcorder's own hiss and motor. Stops dead with the tape."""
+    hvac = band(noise(N), 25, 160) * 0.05
+    hvac += band(noise(N), 160, 600) * 0.008
+    hiss = band(noise(N), 3000, 14000) * 0.0045
     t = np.arange(N) / SR
-    wobble = 1 + 0.002 * np.sin(2 * np.pi * 0.31 * t)
-    x = np.zeros(N)
-    for h, a in ((2, 1.0), (4, 0.55), (6, 0.35), (3, 0.18), (8, 0.22), (10, 0.12), (12, 0.08), (16, 0.05)):
-        x += a * np.sin(2 * np.pi * 60 * h * t * wobble + h)
-    x = np.tanh(x * 1.6) * 0.5                           # transformer grit
-    whine = 0.05 * np.sin(2 * np.pi * 9470 * t) * (1 + 0.3 * np.sin(2 * np.pi * 3.1 * t))
-    level = frames_to_env([T.hum_level(f) for f in range(T.TOTAL)])
-    jitter = 1 + 0.08 * band(rng.standard_normal(N), hi=12)
-    return mono((x + whine) * level * jitter) * 0.16
+    motor = mono(0.0012 * np.sin(2 * np.pi * 1210 * t) * (1 + 0.5 * np.sin(2 * np.pi * 0.7 * t)))
+    out = hvac + hiss + motor
+    out[idx(T.CUT):] = 0
+    return out
 
 
-def light_events():
-    """Relay ticks and arcing when tubes sputter; a ballast ping when they strike."""
-    out = np.zeros((N, 2))
+def hum():
+    """Ten tired magnetic ballasts: 120 Hz and its harmonics, plus the sizzle of
+    the arc itself (noise amplitude-modulated at mains rate). Follows the lights."""
+    t = np.arange(N) / SR
+    tonal = np.zeros(N, np.float32)
+    for h, a in ((1, 0.5), (2, 1.0), (3, 0.45), (4, 0.5), (5, 0.25), (6, 0.3), (8, 0.16), (10, 0.09), (12, 0.07)):
+        tonal += a * np.sin(2 * np.pi * 60 * h * t + h * 0.7)
+    tonal = np.tanh(tonal * 0.9).astype(np.float32)
+    am = (0.5 + 0.5 * np.abs(np.sin(2 * np.pi * 60 * t))) ** 6
+    sizzle = band(rng.standard_normal(N).astype(np.float32), 2200, 7500) * am
+    level = np.repeat([T.hum_level(f) for f in range(T.TOTAL)], SR // T.FPS)[:N].astype(np.float32)
+    level = np.convolve(level, np.ones(96) / 96, mode="same")
+    wobble = 1 + 0.12 * band(rng.standard_normal(N).astype(np.float32)[:, None], hi=6)[:, 0] * 8
+    out = (tonal * 0.10 + sizzle * 0.05) * level * wobble
+    return np.stack([out, np.roll(out, 37)], 1).astype(np.float32)
+
+
+def flicker():
+    """Relays ticking, arcs spitting, ballasts pinging as tubes re-strike."""
+    out = np.zeros((N, 2), np.float32)
     prev = [1.0] * T.N_LIGHTS
-    for f in range(1, T.CUT):
+    for f in range(1, T.BLACKOUTS[-1][0] + 1):
         for i in range(T.N_LIGHTS):
             lvl = T.light_level(i, f)
             if lvl == prev[i]:
                 continue
-            near = 1.0 - i / (T.N_LIGHTS + 2)              # far tubes are quieter
-            pan = np.array([0.6 + 0.4 * near, 0.6 + 0.4 * (1 - near)])
-            n = int(0.035 * SR)
-            tick = band(noise(n), 1800, 7000) * decay(n, 0.004)
-            if lvl > prev[i]:                                # strike: ping + buzz burst
-                m = int(0.12 * SR)
-                ping = mono(tone(1340 + 90 * i, 0.12) * np.exp(-np.arange(m) / (0.03 * SR)))
-                tick = np.pad(tick, ((0, m - n), (0, 0))) + ping * 0.25
-            place(out, tick * pan, f, 0.35 * near)
+            metres = abs(T.LIGHT_Y[i] - 1.0)
+            n = int(0.08 * SR)
+            arc = band(noise(n), 1500, 9000) * (rng.random((n, 1)) > 0.93) * decay(n, 0.02) * 0.8
+            tick = tape(kenney(f"impactMetal_light_00{rng.integers(0, 5)}"), 9)[: int(0.05 * SR)] * 0.35
+            clip = np.zeros((n, 2), np.float32)
+            clip[: len(tick)] += tick
+            clip += arc
+            if lvl > prev[i]:
+                ping = tape(kenney(f"impactGlass_light_00{rng.integers(0, 5)}"), 7) * 0.12
+                clip = np.concatenate([clip, np.zeros((max(0, len(ping) - n), 2), np.float32)])
+                clip[: len(ping)] += ping
+            place(out, pan(far(clip, metres), (i % 3 - 1) * 0.2), f, 0.6)
             prev[i] = lvl
     return out
 
 
-def breaker(strength=1.0):
-    n = int(0.7 * SR)
-    thud = mono(tone(np.linspace(70, 38, n), 0.7) * np.exp(-np.arange(n) / (0.09 * SR)))
-    click = band(noise(n), 900, 5000) * decay(n, 0.006)
-    return (thud * 0.9 + click * 0.6) * strength
+def breaker(strength=1.0, seed=0):
+    """A breaker somewhere in the walls dropping out."""
+    r = np.random.default_rng(seed)
+    metal = tape(kenney(f"impactMetal_heavy_00{r.integers(0, 5)}"), -7)
+    body = tape(kenney(f"impactSoft_heavy_00{r.integers(0, 5)}"), -5)
+    n = max(len(metal), len(body))
+    clip = np.zeros((n, 2), np.float32)
+    clip[: len(metal)] += metal * 0.7
+    clip[: len(body)] += body
+    return verb(np.concatenate([clip, np.zeros((SR, 2), np.float32)]), 0.45) * strength
 
 
-def blackouts():
-    out = np.zeros((N, 2))
-    for a, _ in T.BLACKOUTS:
-        place(out, breaker(0.8), a)
+def power():
+    out = np.zeros((N, 2), np.float32)
+    for k, (a, _) in enumerate(T.BLACKOUTS):
+        place(out, breaker(0.55, k), a)
+        n = int(0.22 * SR)                                   # the hum dying, pitch falling
+        place(out, mono(tone(np.linspace(120, 50, n), n / SR) * np.linspace(1, 0, n) ** 2 * 0.05), a - 1)
     for k, (light, f) in enumerate(sorted(T.CREEP_OFF.items(), key=lambda kv: kv[1])):
-        place(out, breaker(0.35 + 0.08 * k), f)            # getting closer
-    return reverb(out, 0.45)
+        place(out, pan(breaker(0.25 + 0.09 * k, 10 + k), 0.15 - 0.03 * k), f)   # getting closer
+    return out
 
 
-def room_tone():
-    x = band(noise(N), hi=180) * 0.05 + band(noise(N), 2500, 12000) * 0.006   # air handling + tape hiss
-    env = np.ones(N)
-    env[idx(T.CUT):] = 0.0                                                   # the tape just stops
-    return x * env[:, None]
+def door():
+    """The open office door down the hall, moving on its own."""
+    x = tape(kenney("doorOpen_2"), -4)
+    x = rubber(x, tempo=0.55)
+    out = np.zeros((N, 2), np.float32)
+    place(out, pan(far(x, 12), 0.35), 196, 0.5)
+    return out
 
 
-def drone():
-    """Wrongness under the floor. Builds with each appearance, then gets out of the way."""
-    t = np.arange(N) / SR
-    x = np.zeros(N)
-    for fq, a in ((41.2, 1.0), (55.0, 0.7), (58.3, 0.5), (110.4, 0.18), (116.9, 0.14)):
-        x += a * np.sin(2 * np.pi * fq * t + rng.uniform(0, 6))
-    x *= 0.6 + 0.4 * np.sin(2 * np.pi * 0.13 * t)
-    wind = band(rng.standard_normal(N), 120, 420) * 0.5
-    steps = np.zeros(T.TOTAL)
-    for k, key in enumerate(["F1", "F2", "F3", "F4", "F5"]):
-        a, _ = T.FIGURES[key]
-        steps[a:] = 0.25 + 0.17 * k
-    steps[T.FIGURES["F6"][0]:] = 0.0                       # it stops moving; so does the music
-    steps[T.NV_START:T.CUT] = np.linspace(0.3, 1.0, T.CUT - T.NV_START)
-    steps[T.TILT[1]:T.LUNGE[0]] = 0.1                       # face to face: just its breath
-    env = frames_to_env(steps, smooth_ms=600)
-    return mono((x * 0.5 + wind) * env) * 0.22
+# ------------------------------------------------------------- the tenant
+def steps(n_steps, dur_frames, metres, seed, skitter=False):
+    """It moving in the dark: too many bare footfalls, too fast, on carpet."""
+    r = np.random.default_rng(seed)
+    length = int(sec(dur_frames) * SR)
+    clip = np.zeros((length + SR, 2), np.float32)
+    times = np.sort(r.uniform(0.02, sec(dur_frames) - 0.03, n_steps))
+    for t in times:
+        s = tape(kenney(f"footstep_carpet_00{r.integers(0, 5)}"), r.uniform(-7, -3)) * r.uniform(0.6, 1.0)
+        thud = tape(kenney(f"impactSoft_medium_00{r.integers(0, 5)}"), r.uniform(-4, 0)) * 0.6
+        a = int(t * SR)
+        clip[a:a + len(s)] += band(s, hi=4000)
+        clip[a:a + len(thud)] += thud
+        if skitter:                                         # hands too, and nails
+            c = tape(kenney(f"cloth{r.integers(1, 4)}"), 2)[: int(0.12 * SR)] * 0.4
+            clip[a:a + len(c)] += c
+            nail = tape(kenney(f"impactGeneric_light_00{r.integers(0, 5)}"), 12)[: int(0.03 * SR)] * 0.3
+            b = a + int(0.04 * SR)
+            clip[b:b + len(nail)] += nail
+    clip[length:] *= 0                                      # it stops the instant the lights come back
+    return far(clip, metres)
+
+
+def movement():
+    out = np.zeros((N, 2), np.float32)
+    # blackout -> who it is, how far away, how many steps
+    for (a, b), metres, n, skitter, p in zip(T.BLACKOUTS[:5], (23, 17, 11, 7, 3), (5, 5, 4, 7, 2),
+                                             (False, False, False, True, False), (0.1, -0.25, 0.2, -0.1, 0.0)):
+        place(out, pan(steps(n, b - a, metres, a, skitter), p), a, 1.6)
+    return out
+
+
+def croak(seconds, seed=0):
+    """Its voice: a dead, clicking rattle from the bottom of a long throat.
+    Recorded creature vocals slowed and dropped, over a synthetic glottal fry."""
+    r = np.random.default_rng(seed)
+    n = int(seconds * SR)
+    rate = 26 + 9 * np.cumsum(r.standard_normal(n)) / np.sqrt(np.arange(1, n + 1)) / 3
+    phase = np.cumsum(np.clip(rate, 12, 45)) / SR
+    pulses = (np.diff(np.floor(phase), prepend=0) > 0).astype(np.float32)
+    pulses *= r.uniform(0.4, 1.0, n).astype(np.float32)
+    fry = np.zeros((n, 2), np.float32)
+    for f0, bw, g in ((520, 160, 1.0), (1150, 220, 0.6), (2500, 400, 0.25)):    # an 'uh' with a dry throat
+        fry += band(mono(pulses), f0 - bw, f0 + bw, 2) * g
+    fry += band(noise(n), 300, 3000) * 0.05
+    voice = np.zeros((n, 2), np.float32)
+    for name, semis in (("weird_05", -6), ("monster_07", -4), ("grunt_02", -7)):
+        v = rubber(creature(name), tempo=0.5, semis=semis)
+        k = min(n, len(v))
+        voice[:k] += v[:k] * 0.35
+    out = fry * 3 + voice
+    return out * env(n, 0.15, 0.4)
+
+
+def cracks():
+    """Its neck going over, one notch at a time: real bone breaks, slowed, with a creak."""
+    out = np.zeros((N, 2), np.float32)
+    for k, (f, _) in enumerate(T.ROLL_F6[1:]):
+        brk = tape(oga(f"deep_breaks__Deep_Break_{k % 10 + 1}"), -2.5)
+        crk = tape(kenney(f"creak{k % 3 + 1}"), -9)[: int(0.35 * SR)] * 0.25
+        clip = np.zeros((max(len(brk), len(crk)), 2), np.float32)
+        clip[: len(brk)] += brk
+        clip[: len(crk)] += crk
+        place(out, pan(verb(np.concatenate([clip, np.zeros((SR // 2, 2), np.float32)]), 0.18, ROOM), 0.05), f, 0.85)
+    return out
+
+
+def grin():
+    """Lips peeling back off the teeth. Wet, slow, very close."""
+    out = np.zeros((N, 2), np.float32)
+    wet = ["eat_01", "eat_03", "spit_03", "eat_04", "spit_01", "eat_02"]
+    a, b = 372, 458
+    for k, f in enumerate(np.linspace(a, b, 6)):
+        x = tape(creature(wet[k % len(wet)]), -5 - (k % 3)) * (0.14 + 0.04 * k)
+        place(out, pan(band(x, 120, 6000), 0.08), f + rng.uniform(-3, 3))
+    sq = tape(oga("im"), -6)                                # skin stretching under it
+    place(out, band(sq[: int(3.5 * SR)], 80, 2500) * env(int(3.5 * SR), 1.0, 1.0) * 0.12, 395)
+    return out
 
 
 def tinnitus():
     a, b = T.FIGURES["F6"][0], T.BLACKOUTS[-1][0]
     t = np.arange(N) / SR
-    f0 = 3900 + 140 * np.clip((t - sec(a)) / (sec(b) - sec(a)), 0, 1)
-    x = np.sin(2 * np.pi * np.cumsum(f0) / SR)
-    steps = np.zeros(T.TOTAL)
-    steps[a:b] = np.linspace(0.0, 1.0, b - a) ** 1.5
-    return mono(x * frames_to_env(steps, 30)) * 0.03
-
-
-def crack():
-    """A neck going over one notch. A cluster of tiny dry snaps and a knock."""
-    n = int(0.35 * SR)
-    out = np.zeros((n, 2))
-    pos = 0
-    for _ in range(rng.integers(4, 8)):
-        m = int(rng.uniform(0.001, 0.004) * SR)
-        snap = band(noise(m * 8), 1200, 9000)[: m * 8] * decay(m * 8, rng.uniform(0.0008, 0.002))
-        out[pos:pos + len(snap)] += snap * rng.uniform(0.5, 1.0)
-        pos += int(rng.uniform(0.004, 0.018) * SR)
-    knock = mono(tone(np.linspace(140, 70, n), n / SR) * np.exp(-np.arange(n) / (0.025 * SR)))
-    return out * 1.3 + knock * 0.6
-
-
-def cracks():
-    out = np.zeros((N, 2))
-    for f, _ in T.ROLL_F6[1:]:
-        place(out, crack(), f, 0.9)
-    return reverb(out, 0.3)
-
-
-def creak():
-    """Skin stretching while it smiles. A slow, wet, uneven pulse train."""
-    a, b = 372, 458
-    n = idx(b) - idx(a)
-    rate = 18 + 22 * np.abs(band(rng.standard_normal(n), hi=3) * 4)
-    phase = np.cumsum(rate) / SR
-    pulses = (np.diff(np.floor(phase), prepend=0) > 0).astype(float)
-    x = band(np.repeat(pulses[:, None], 2, 1) + noise(n) * 0.02, 300, 1400, 2)
-    env = np.sin(np.linspace(0, np.pi, n)) ** 0.5
-    out = np.zeros((N, 2))
-    out[idx(a):idx(a) + n] = x * env[:, None] * 0.9
-    return out
+    f0 = 4100 + 180 * np.clip((t - sec(a)) / (sec(b) - sec(a)), 0, 1)
+    x = np.sin(2 * np.pi * np.cumsum(f0) / SR).astype(np.float32)
+    level = np.zeros(T.TOTAL, np.float32)
+    level[a:b] = np.linspace(0, 1, b - a) ** 2
+    lv = np.repeat(level, SR // T.FPS)[:N]
+    return mono(x * np.convolve(lv, np.ones(4800) / 4800, mode="same") * 0.016)
 
 
 def heartbeat():
-    """The operator's. Speeding up."""
-    out = np.zeros((N, 2))
-    t, end = sec(T.FIGURES["F6"][0]) + 0.6, sec(T.BLACKOUTS[-1][0])
-    while t < end:
-        g = (t - sec(342)) / (end - sec(342))
-        bpm = 70 + 60 * g
-        for off, amp in ((0.0, 1.0), (0.17, 0.6)):
-            n = int(0.18 * SR)
-            beat = mono(tone(np.linspace(62, 40, n), n / SR) * np.exp(-np.arange(n) / (0.04 * SR)))
-            s = int((t + off) * SR)
-            out[s:s + n] += beat[: max(0, min(n, N - s))] * amp * (0.25 + 0.35 * g)
-        t += 60 / bpm
-    return out
-
-
-def breathing():
-    """Night-shot: the operator, trying to be quiet. Stops when they look up."""
-    out = np.zeros((N, 2))
-    t, end = sec(T.NV_START) + 0.4, sec(T.TILT[1])
+    """The operator's, in their ears."""
+    out = np.zeros((N, 2), np.float32)
+    t, end = sec(T.FIGURES["F6"][0]) + 0.8, sec(T.BLACKOUTS[-1][0])
     k = 0
     while t < end:
-        dur = 0.9 if k % 2 == 0 else 1.1
-        n = int(dur * SR)
-        shape = np.sin(np.linspace(0, np.pi, n)) ** 2 * (1 + 0.3 * band(rng.standard_normal(n), hi=15) * 4)
-        lo, hi = (500, 2600) if k % 2 == 0 else (350, 1800)
-        b = band(noise(n), lo, hi, 2) * shape[:, None]
-        s = int(t * SR)
-        out[s:s + n] += b[: max(0, min(n, N - s))] * (0.18 if k % 2 == 0 else 0.13)
-        t += dur + rng.uniform(0.05, 0.25)
+        g = (t - sec(342)) / (end - sec(342))
+        for off, amp in ((0.0, 1.0), (0.16, 0.55)):
+            beat = band(tape(kenney(f"impactSoft_medium_00{k % 5}"), -9), hi=140) * amp * (0.35 + 0.5 * g)
+            place(out, beat, (t + off) * T.FPS)
+        t += 60 / (68 + 70 * g)
         k += 1
     return out
 
 
-def camcorder_beep():
-    """Two square-wave beeps: NIGHTSHOT ON."""
-    out = np.zeros((N, 2))
-    n = int(0.06 * SR)
-    b = mono(np.sign(tone(1800, 0.06)) * np.minimum(1, np.minimum(np.arange(n), n - np.arange(n)) / 200))
-    for k in range(2):
-        place(out, b, T.NV_START + k * 0.1 * T.FPS, 0.08)
+def operator_breath():
+    """Night-shot: the operator trying to be quiet. Holds their breath before looking up."""
+    out = np.zeros((N, 2), np.float32)
+    br = oga("breathing_tired", peak=0.6)
+    br = band(br, 150, 7000)
+    t = sec(T.NV_START) + 0.5
+    while t < sec(526):
+        seg = br * rng.uniform(0.8, 1.0)
+        place(out, pan(seg, -0.15), t * T.FPS, 0.55)
+        t += len(br) / SR * rng.uniform(0.8, 0.95)
+    out[idx(526):] = 0                                       # breath held
+    gasp = tape(oga("breathing_tired", peak=0.9)[int(0.1 * SR):int(0.6 * SR)], -1)
+    place(out, pan(gasp, -0.15), T.TILT[1] - 2, 0.7)          # ...and lost when they see it
     return out
+
+
+def above():
+    """Something on the ceiling, right over the microphone."""
+    out = np.zeros((N, 2), np.float32)
+    creak = tape(kenney("creak2"), -10)
+    place(out, band(verb(creak, 0.25, ROOM), 80, 3000), 505, 0.3)            # a ceiling tile flexing
+    sniff = tape(creature("nose"), -3)
+    place(out, verb(sniff, 0.12, ROOM), 530, 0.55)                            # it smells you
+    drip = tape(creature("spit_03"), 4)[: int(0.15 * SR)]
+    place(out, verb(drip, 0.2, ROOM), 537, 0.25)
+    breath = band(oga("horrorbreathing__horrorbreathing__horrorbreathing", peak=0.7), 60, 5000)
+    breath = rubber(breath, tempo=0.85, semis=-2)
+    place(out, breath[: idx(T.LUNGE[0]) - idx(T.TILT[1] - 4)] * env(idx(T.LUNGE[0]) - idx(T.TILT[1] - 4), 0.6, 0.05),
+          T.TILT[1] - 4, 0.6)
+    exhale = tape(oga("ghostbreath", peak=0.8), -3)
+    place(out, band(exhale, 100, 6000), 579, 0.6)
+    rattle = croak(sec(T.LUNGE[0] - 586), seed=7)
+    place(out, rattle * np.linspace(0.2, 1.0, len(rattle))[:, None], 586, 0.55)
+    return out
+
+
+def f6_rattle():
+    """Its voice, for the first time, once the grin is all the way open."""
+    out = np.zeros((N, 2), np.float32)
+    c = croak(sec(468 - 440), seed=3)
+    place(out, c * np.linspace(0.3, 1.0, len(c))[:, None], 440, 0.5)
+    for f, metres, g in ((214, 20, 0.5), (300, 9, 0.5), (330, 6, 0.6)):       # faint, earlier, far off
+        c = croak(1.0, seed=f)
+        place(out, far(c, metres), f, g)
+    return out
+
+
+def drone():
+    """Wrongness under the floor: a stretched, dropped creature moan, and a cluster."""
+    t = np.arange(N) / SR
+    cluster = np.zeros(N, np.float32)
+    for fq, a in ((36.7, 1.0), (55.0, 0.6), (58.3, 0.45), (73.4, 0.25), (77.8, 0.2)):
+        cluster += a * np.sin(2 * np.pi * fq * t + rng.uniform(0, 6))
+    cluster *= 0.6 + 0.4 * np.sin(2 * np.pi * 0.11 * t)
+    moan = rubber(creature("monster_04"), tempo=0.12, semis=-12)
+    moan = np.concatenate([moan, moan[::-1]] * 4)
+    moan = band(moan, 40, 900)[:N]
+    moan = np.pad(moan, ((0, N - len(moan)), (0, 0)))
+    steps_ = np.zeros(T.TOTAL, np.float32)
+    for k, key in enumerate(["F1", "F2", "F3", "F4", "F5"]):
+        steps_[T.FIGURES[key][0]:] = 0.25 + 0.16 * k
+    steps_[T.FIGURES["F6"][0]:] = 0.0                       # it stops moving; so does the music
+    steps_[T.NV_START:T.CUT] = np.linspace(0.25, 0.9, T.CUT - T.NV_START)
+    steps_[T.TILT[1]:T.LUNGE[0]] = 0.08
+    lv = np.repeat(steps_, SR // T.FPS)[:N]
+    lv = np.convolve(lv, np.ones(SR // 2) / (SR // 2), mode="same")[:, None]
+    return (mono(cluster) * 0.12 + moan * 0.5) * lv * 0.5
 
 
 def riser():
-    a, b = T.TILT[0], T.LUNGE[0]
-    n = idx(b) - idx(a)
-    g = np.linspace(0, 1, n) ** 2.5
-    x = band(noise(n), 1500, 9000) * g[:, None] * 0.12
-    sub = mono(np.sin(2 * np.pi * np.cumsum(np.linspace(30, 52, n)) / SR) * g) * 0.25
-    out = np.zeros((N, 2))
-    out[idx(a):idx(a) + n] = x + sub
-    s = idx(T.TILT[1])                     # breath held: a hard dip to almost nothing
-    out[s:idx(b)] *= 0.12
+    """The tilt up: reversed reverb pulling in, a bowed-metal screech, sub swelling."""
+    a, b = T.TILT
+    n = idx(T.LUNGE[0]) - idx(a)
+    out = np.zeros((N, 2), np.float32)
+    scream = tape(creature("scream_02"), -12)
+    tail = verb(np.concatenate([scream, np.zeros((3 * SR, 2), np.float32)]), 0.95)[::-1]
+    tail = tail[-(idx(b) - idx(a)):] if len(tail) > idx(b) - idx(a) else tail
+    place(out, tail * 0.5, b - len(tail) / SR * T.FPS)
+    g = np.linspace(0, 1, idx(b) - idx(a)) ** 2.5
+    bow = np.zeros((len(g), 2), np.float32)
+    nz = noise(len(g))
+    for f0 in (1830, 2470, 3310):
+        bow += band(nz, f0 * 0.985, f0 * 1.015, 2) * 6
+    place(out, bow * g[:, None] * 0.25, a)
+    sub = mono(tone(np.linspace(28, 46, len(g)), len(g) / SR) * g) * 0.35
+    place(out, sub, a)
+    out[idx(b):idx(b) + n] *= 0                              # face to face: everything drops out
     return out
 
 
-def exhale():
-    """Something breathing out, very close, just before it moves."""
-    n = int(1.1 * SR)
-    shape = np.sin(np.linspace(0, np.pi, n)) ** 3
-    x = band(noise(n), 180, 900, 2) * shape[:, None]
-    x += band(noise(n), 2500, 5000, 2) * shape[:, None] * 0.3
-    out = np.zeros((N, 2))
-    place(out, x, 578, 0.45)
-    return out
-
-
-def sting():
-    """The lunge. Everything at once, then nothing."""
-    a, b = T.LUNGE[0], T.CUT
+def lunge():
+    """It comes for the lens. Everything at once, then nothing."""
+    a, b = T.LUNGE
     n = idx(b) - idx(a)
+    layers = [(tape(creature("scream_01"), -1), 1.0), (tape(creature("scream_02"), -5), 0.9),
+              (tape(creature("hurt_02"), -3), 0.6), (tape(creature("roar_03"), -9), 0.8)]
+    x = np.zeros((n, 2), np.float32)
+    for clip, g in layers:
+        k = min(n, len(clip))
+        x[:k] += clip[:k] * g
+    x += band(noise(n), 800, 5000) * 0.25
     t = np.arange(n) / SR
-    x = np.zeros(n)
-    for base in (311, 329.6, 466.2, 493.9, 698.5, 739.9):
-        f = base * (1 + 0.6 * (t / t[-1]) ** 2)
-        x += ((np.cumsum(f) / SR) % 1.0 - 0.5)                # detuned saws, pitching up
-    scream = band(rng.standard_normal(n), 900, 4200) * 2.5
-    impact = np.sin(2 * np.pi * 42 * t) * np.exp(-t / 0.25) * 3
-    y = np.tanh((x * 0.5 + scream + impact) * 1.8)
-    out = np.zeros((N, 2))
-    out[idx(a):idx(a) + n] = mono(y) * 0.95
-    out[idx(b):idx(T.TITLE[0])] = 0.0
+    x += mono(np.sin(2 * np.pi * 38 * t) * np.exp(-t / 0.3)) * 1.2
+    x = drive(x * 1.6, 3.0)
+    crush = np.round(x * 24) / 24                            # the tape giving up
+    x = x * 0.6 + crush * 0.4
+    out = np.zeros((N, 2), np.float32)
+    place(out, x * env(n, 0.002, 0.0), a, 0.95)
+    return out
+
+
+def camcorder_beep():
+    out = np.zeros((N, 2), np.float32)
+    n = int(0.06 * SR)
+    b = mono(np.sign(tone(1800, 0.06)) * np.minimum(1, np.minimum(np.arange(n), n - np.arange(n)) / 200))
+    for k in range(2):
+        place(out, b, T.NV_START + k * 0.1 * T.FPS, 0.06)
     return out
 
 
 def title_booms():
-    out = np.zeros((N, 2))
-    n = int(3.5 * SR)
-    t = np.arange(n) / SR
-    boom = mono(np.sin(2 * np.pi * np.cumsum(np.linspace(48, 28, n)) / SR) * np.exp(-t / 0.9))
-    boom += band(noise(n), hi=300) * np.exp(-t / 0.5)[:, None] * 0.3
-    for f, g in ((636, 0.55), (662, 0.75)):
-        place(out, boom, f, g)
-    return reverb(out, 0.5)
+    out = np.zeros((N, 2), np.float32)
+    for f, g, k in ((636, 0.55, 0), (662, 0.8, 1)):
+        hit = tape(kenney(f"impactPunch_heavy_00{k}"), -14)
+        n = int(4 * SR)
+        t = np.arange(n) / SR
+        sub = mono(np.sin(2 * np.pi * np.cumsum(np.linspace(46, 26, n)) / SR) * np.exp(-t / 1.0))
+        clip = sub * 0.8
+        clip[: len(hit)] += hit * 0.7
+        place(out, verb(clip, 0.5), f, g)
+    return out
 
 
 def mix():
-    parts = [hum(), light_events(), blackouts(), room_tone(), drone(), tinnitus(), cracks(), creak(),
-             heartbeat(), breathing(), camcorder_beep(), riser(), exhale(), sting(), title_booms()]
+    parts = [room_tone(), hum(), flicker(), power(), door(), movement(), cracks(), grin(), tinnitus(),
+             heartbeat(), f6_rattle(), operator_breath(), above(), drone(), riser(), lunge(),
+             camcorder_beep(), title_booms()]
     out = sum(parts)
-    out[idx(T.CUT):idx(T.TITLE[0])] = 0.0                  # dead air
+    out[idx(T.CUT):idx(T.TITLE[0])] = 0.0                   # dead air
     fade = idx(T.TOTAL - 18)
     out[fade:] *= np.linspace(1, 0, N - fade)[:, None]
-    out /= np.abs(out).max() / 0.89
-    return out
+    return out / (np.abs(out).max() / 0.9)
 
 
 def main():

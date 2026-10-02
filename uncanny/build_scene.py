@@ -1,7 +1,8 @@
 """THE HALLWAY: a procedural found-footage horror short, built in Blender + Cycles.
 
-Everything (the corridor, the fluorescent lights, the thing at the end of the
-hall, its too-many teeth) is generated from code. No external assets.
+The corridor, the fluorescent lights and the camera are generated from code.
+The thing in the hallway is built by creature.py from MakeHuman's CC0 human
+assets (fetched by fetch_assets.py), then made wrong.
 
     python3 uncanny/build_scene.py --blend hallway.blend          # build + save .blend
     python3 uncanny/build_scene.py --still 465 grin.png           # render one frame
@@ -13,16 +14,15 @@ Needs the `bpy` module (pip install bpy) or run through Blender 5.x:
 import argparse
 import math
 import os
-import random
 import sys
 
 import bpy  # noqa: I001  (must come first: it puts addon_utils on the path)
 import addon_utils
 import bmesh
-from mathutils import Euler, Matrix, Quaternion, Vector, noise
-from mathutils.bvhtree import BVHTree
+from mathutils import Euler, Vector, noise
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import creature as C  # noqa: E402
 import timeline as T  # noqa: E402
 
 # ----------------------------------------------------------------- dimensions
@@ -33,21 +33,9 @@ DOOR_W, DOOR_H = 0.95, 2.1
 DOORS = {-1: [8.2, 18.6], 1: [12.3, 24.0]}   # side -> doorway centres along Y
 
 CAM_POS = Vector((0.28, 0.0, 1.55))
-F6_POS = (0.06, 2.6)          # where it finally stops
 LIGHT_W = 62.0               # area light watts per panel
 PANEL_EMIT = 9.0             # what the camera sees of a panel
 FLUO = (0.86, 1.0, 0.84, 1.0)
-
-# head proportions (metres): human, a size too big, no ears
-HEAD_SX, HEAD_SY, HEAD_SZ = 0.094, 0.118, 0.150
-EYE_U, EYE_W = 0.35, 0.07    # socket centres in face coordinates
-EYE_R = 0.0165
-HEAD_SCALE = 1.15            # on top of the above: slightly too big for the body
-MOUTH_W = -0.50
-PHI_MAX = math.radians(106)  # how far round the face the grin can reach
-MOUTH_Z = MOUTH_W * HEAD_SZ
-MOUTH_LIFT = 0.046           # corners curl up towards the eyes
-SMILE_KEYS = [T.SMILE["F5"], 0.49, 0.62, 0.75, 0.88, 1.0]
 
 
 def lerp(a, b, t):
@@ -157,9 +145,10 @@ class Nodes:
                 self._set(nd.inputs[i], v)
         return nd.outputs[0]
 
-    def mix(self, fac, a, b):
+    def mix(self, fac, a, b, blend="MIX"):
         nd = self.nt.nodes.new("ShaderNodeMix")
         nd.data_type = "RGBA"
+        nd.blend_type = blend
         nd.clamp_factor = True
         socks = [s for s in nd.inputs if s.type == "RGBA"]
         self._set(nd.inputs["Factor"], fac)
@@ -258,65 +247,7 @@ def build_materials():
     n.p(base=rgba(0.2, 0.0, 0.0), emit=rgba(1.0, 0.04, 0.02), emit_strength=9.0)
     M["exit"] = n.mat
 
-    # Pale, slightly translucent skin. Wet. Mottled blue where it's thin. Ribs.
-    n = Nodes("Skin")
-    oc = n.coords("Object")
-    mott = n.noise(oc, 7.0, 6, 0.55).outputs["Fac"]
-    col = n.mix(n.ramp(mott, [(0.3, rgba(0, 0, 0)), (0.75, rgba(1, 1, 1))]).outputs["Color"],
-                rgba(0.60, 0.57, 0.52), rgba(0.42, 0.43, 0.47))
-    blotch = n.ramp(n.noise(oc, 2.2, 4, 0.5).outputs["Fac"], [(0.55, rgba(0, 0, 0)), (0.75, rgba(1, 1, 1))])
-    col = n.mix(n.math("MULTIPLY", blotch.outputs["Color"], 0.5), col, rgba(0.48, 0.38, 0.36))
-    veins = n.ramp(n.noise(oc, 3.0, 12, 0.7).outputs["Fac"], [(0.49, rgba(0, 0, 0)), (0.5, rgba(1, 1, 1)), (0.51, rgba(0, 0, 0))])
-    col = n.mix(n.math("MULTIPLY", veins.outputs["Color"], 0.4), col, rgba(0.30, 0.34, 0.45))
-    ox, oy, oz = n.xyz(oc)
-    rib_window = n.math("MULTIPLY",
-                        n.node("ShaderNodeMapRange", {"Value": oz, "From Min": 1.42, "From Max": 1.52}).outputs[0],
-                        n.node("ShaderNodeMapRange", {"Value": oz, "From Min": 1.84, "From Max": 1.74}).outputs[0])
-    ribs = n.math("MULTIPLY", n.math("ABSOLUTE", n.math("SINE", n.math("MULTIPLY", oz, 2 * math.pi / 0.042))), rib_window)
-    pores = n.noise(oc, 600.0, 2, 0.5).outputs["Fac"]
-    height = n.math("ADD", n.math("MULTIPLY", ribs, 0.35), n.math("MULTIPLY", pores, 0.1))
-    n.p(base=col, rough=0.5, sss=0.25, sss_radius=(0.9, 0.35, 0.22), sss_scale=0.015,
-        coat=0.18, coat_rough=0.25, normal=n.bump(height, 0.35, 0.004))
-    n.bsdf.subsurface_method = "BURLEY"
-    M["skin"] = n.mat
-
-    n = Nodes("Gums")
-    n.p(base=rgba(0.13, 0.015, 0.02), rough=0.3, coat=0.6, coat_rough=0.1)
-    M["gums"] = n.mat
-
-    n = Nodes("Teeth")
-    n.p(base=rgba(0.74, 0.68, 0.52), rough=0.25, sss=0.15, sss_radius=(0.5, 0.4, 0.3), sss_scale=0.004,
-        coat=0.6, coat_rough=0.05)
-    n.bsdf.subsurface_method = "BURLEY"
-    M["teeth"] = n.mat
-
-    M["eye"] = eye_material("Eye", glow=0.0)
-    M["eye_glow"] = eye_material("EyeShine", glow=7.0)
     return M
-
-
-def eye_material(name, glow):
-    """Lidless, wet, pale iris, pinprick pupil. The iris sits on local -Y,
-    which a Damped Track keeps pointed at the camera at all times."""
-    n = Nodes(name)
-    x, y, z = n.xyz(n.coords("Object"))
-    r = n.math("SQRT", n.math("ADD", n.math("MULTIPLY", x, x), n.math("MULTIPLY", z, z)))
-    front = n.math("LESS_THAN", y, 0.0)
-    iris = n.math("MULTIPLY", n.math("LESS_THAN", r, 0.40), front)
-    limbal = n.math("MULTIPLY", n.math("GREATER_THAN", r, 0.33), iris)
-    pupil = n.math("MULTIPLY", n.math("LESS_THAN", r, 0.085), front)
-    veins = n.ramp(n.noise(n.coords("Object"), 6.0, 10, 0.7).outputs["Fac"],
-                   [(0.47, rgba(0, 0, 0)), (0.5, rgba(1, 1, 1)), (0.53, rgba(0, 0, 0))])
-    sclera = n.mix(n.math("MULTIPLY", veins.outputs["Color"], 0.6), rgba(0.84, 0.80, 0.72), rgba(0.62, 0.12, 0.10))
-    streak = n.noise(n.coords("Object"), 30.0, 3, 0.5).outputs["Fac"]
-    iris_col = n.mix(streak, rgba(0.50, 0.56, 0.55), rgba(0.70, 0.74, 0.70))
-    col = n.mix(iris, sclera, iris_col)
-    col = n.mix(limbal, col, rgba(0.18, 0.2, 0.2))
-    col = n.mix(pupil, col, rgba(0.0, 0.0, 0.0))
-    n.p(base=col, rough=0.03, spec=0.9, coat=1.0, coat_rough=0.0)
-    if glow:
-        n.p(emit=rgba(1, 1, 1), emit_strength=n.math("MULTIPLY", iris, glow))
-    return n.mat
 
 
 def panel_material(i):
@@ -475,362 +406,19 @@ def animate_lights(rigs):
                 last = lvl
 
 
-# -------------------------------------------------------------------- figure
-def gauss(d, s):
-    return math.exp(-((d / s) ** 2))
+# ---------------------------------------------------------------- the tenant
+FOCUS = {}                   # where its face is, for the camera operator to find
 
-
-def build_head_bm():
-    """Almost a person. Brow, sockets, a nose, cheekbones, a chin. No ears, no
-    hair, no lids. The features are sculpted as bumps on a sphere, in "face
-    coordinates" (u across, w up) on the side looking down local -Y."""
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=128, v_segments=96, radius=1.0)
-    ss = T.smoothstep
-    for v in bm.verts:
-        n = v.co.normalized()
-        u, w = n.x, n.z
-        front = max(0.0, -n.y)
-        side = max(0.0, 1 - abs(n.y) * 1.6)
-        f2, f4 = front ** 2, front ** 4
-        r = 1.0 - 0.10 * front ** 3                                   # flatter face plane
-        r += 0.07 * gauss(w - 0.27, 0.07) * gauss(u, 0.44) * f2       # brow ridge
-        r += 0.05 * gauss(w - 0.15, 0.10) * gauss(u, 0.07) * f4       # bridge between the eyes
-        for s in (-1, 1):
-            r -= 0.15 * gauss(math.hypot(u - s * EYE_U, (w - EYE_W) * 1.55), 0.15) * front  # almond sockets
-            r -= 0.012 * gauss(math.hypot(u - s * EYE_U, (w - EYE_W - 0.14) * 3), 0.12) * front  # lid crease
-            r += 0.055 * gauss(math.hypot(u - s * EYE_U, (w - EYE_W - 0.075) * 2.6), 0.12) * front  # upper lid
-            r += 0.035 * gauss(math.hypot(u - s * EYE_U, (w - EYE_W + 0.08) * 2.8), 0.11) * front  # lower lid
-            r += 0.07 * gauss(math.hypot(u - s * 0.54, w + 0.08), 0.15) * front ** 0.5   # cheekbones
-            r -= 0.08 * gauss(math.hypot(u - s * 0.45, w + 0.40), 0.15) * front          # hollow cheeks
-            r -= 0.05 * gauss(math.hypot(u - s * 0.075, w + 0.28), 0.032) * f4           # nostrils
-            r -= 0.04 * gauss(math.hypot(u - s * 0.84, w - 0.22), 0.22)                  # temples
-            r += 0.09 * gauss(math.hypot(u - s * 0.80, (w + 0.58) * 1.3), 0.22) * side   # jaw angle
-        nose = 0.26 * ss(0.14, -0.22, w) * (1 - ss(-0.22, -0.31, w))
-        r += nose * gauss(u, 0.045 + 0.08 * ss(-0.05, -0.25, w)) * f4
-        r += 0.05 * gauss(w - MOUTH_W, 0.12) * gauss(u, 0.34) * f2    # muzzle
-        r -= 0.015 * gauss(w - MOUTH_W, 0.03) * gauss(u, 0.3) * f2    # where the lips meet
-        r += 0.08 * gauss(math.hypot(u, w + 0.80), 0.15) * front      # chin
-        x, y, z = n * r
-        if z < 0:
-            x *= 1 - 0.16 * (-z) ** 2
-            if y > 0:
-                y *= 1 - 0.4 * (-z) ** 1.3
-        if z > 0.35:
-            z = 0.35 + (z - 0.35) * 0.8                                 # lower, rounder crown
-        if z > 0:
-            x *= 1 + 0.10 * z                                           # skull, not egg
-        if y > 0 and z > -0.3:
-            y *= 1 + 0.12 * (z + 0.3)
-        v.co = Vector((x * HEAD_SX, y * HEAD_SY, z * HEAD_SZ))
-    return bm
-
-
-def mouth_z(phi):
-    return MOUTH_Z + MOUTH_LIFT * (abs(phi) / PHI_MAX) ** 2.2
-
-
-def surface(bvh, phi, z):
-    d = Vector((math.sin(phi), -math.cos(phi), 0.0))
-    hit = bvh.ray_cast(Vector((0.0, 0.0, z)), d)
-    return hit[0], d
-
-
-def cutter_coords(bvh, s, n=64, ring=10):
-    """A thin curved tube that follows the face. Boolean'd out of the head it
-    becomes the mouth; widening it unzips the grin round towards the ears."""
-    span = lerp(math.radians(12), PHI_MAX, s)
-    gape = lerp(0.0016, 0.0145, s)
-    out = []
-    for k in range(n):
-        t = k / (n - 1)
-        phi = (2 * t - 1) * span
-        p, d = surface(bvh, phi, mouth_z(phi))
-        h = gape * max(0.03, 1 - (2 * t - 1) ** 2) ** 0.7
-        for j in range(ring):
-            th = 2 * math.pi * j / ring
-            rho = -0.007 + 0.021 * math.cos(th)
-            out.append(p + d * rho + Vector((0, 0, h * math.sin(th))))
-    return out
-
-
-def cutter_mesh(name, bvh, smiles, n=64, ring=10):
-    coords = cutter_coords(bvh, smiles[0], n, ring)
-    faces = []
-    for k in range(n - 1):
-        for j in range(ring):
-            a, b = k * ring + j, k * ring + (j + 1) % ring
-            faces.append((a, b, b + ring, a + ring))
-    faces.append(tuple(reversed(range(ring))))
-    faces.append(tuple((n - 1) * ring + j for j in range(ring)))
-    me = bpy.data.meshes.new(name)
-    me.from_pydata(coords, [], faces)
-    bm = bmesh.new()
-    bm.from_mesh(me)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bm.to_mesh(me)
-    bm.free()
-    return me
-
-
-def teeth_mesh(bvh):
-    """Two clenched rows that run the whole way round. 134 teeth."""
-    rng = random.Random(1317)
-    bm = bmesh.new()
-    phi = -PHI_MAX * 0.985
-    while phi < PHI_MAX * 0.985:
-        p, d = surface(bvh, phi, mouth_z(phi))
-        rad = Vector((p.x, p.y, 0)).length
-        w = 0.0047 * rng.uniform(0.86, 1.12)
-        tang = Vector((math.cos(phi), math.sin(phi), 0.0))
-        for sign in (1, -1):
-            h = (0.0098 if sign > 0 else 0.0086) * rng.uniform(0.9, 1.1)
-            c = p - d * 0.0062 + Vector((0, 0, sign * (h * 0.5 + 0.0001)))
-            basis = Matrix((tang * (w * 0.5), d * 0.0042, Vector((0, 0, h * 0.5)))).transposed()
-            mtx = Matrix.Translation(c) @ basis.to_4x4()
-            bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0, matrix=mtx)
-        phi += w * 1.04 / rad
-    return bm
-
-
-def build_figure_assets(M):
-    bm = build_head_bm()
-    bvh = BVHTree.FromBMesh(bm)
-    head_me = bpy.data.meshes.new("Head")
-    bm.to_mesh(head_me)
-    smooth(head_me)
-    head_me.materials.append(M["skin"])
-
-    tb = teeth_mesh(bvh)
-    teeth_me = bpy.data.meshes.new("Teeth")
-    tb.to_mesh(teeth_me)
-    tb.free()
-    smooth(teeth_me)
-    teeth_me.materials.append(M["teeth"])
-
-    eye_me = bpy.data.meshes.new("Eyeball")
-    eb = bmesh.new()
-    bmesh.ops.create_uvsphere(eb, u_segments=48, v_segments=32, radius=1.0)
-    eb.to_mesh(eye_me)
-    eb.free()
-    smooth(eye_me)
-    eye_me.materials.append(M["eye"])
-
-    eyes = []
-    for s in (-1, 1):
-        fy = -math.sqrt(1 - EYE_U ** 2 - EYE_W ** 2)
-        d = Vector((s * EYE_U * HEAD_SX, fy * HEAD_SY, EYE_W * HEAD_SZ)).normalized()
-        hit = bvh.ray_cast(Vector((0, 0, 0)), d)[0]
-        eyes.append(hit - d * 0.003)                # lids close over the top and bottom
-    bm.free()
-    return {"head": head_me, "teeth": teeth_me, "eye": eye_me, "eyes": eyes, "bvh": bvh}
-
-
-def base_joints():
-    J = {
-        "pelvis": ((0, 0.0, 1.18), 0.125, 0.09),
-        "waist": ((0, 0.015, 1.38), 0.08, 0.062),
-        "chest": ((0, 0.02, 1.60), 0.125, 0.09),
-        "upchest": ((0, 0.03, 1.80), 0.14, 0.085),
-        "neck0": ((0, 0.03, 1.93), 0.047, 0.047),
-        "neck1": ((0, 0.02, 2.06), 0.04, 0.04),
-        "neck2": ((0, 0.012, 2.17), 0.037, 0.037),
-    }
-    for s, sd in ((1, "L"), (-1, "R")):
-        J["shoulder" + sd] = ((s * 0.215, 0.04, 1.85), 0.053, 0.053)
-        J["elbow" + sd] = ((s * 0.265, 0.07, 1.36), 0.034, 0.034)
-        J["wrist" + sd] = ((s * 0.285, 0.02, 0.88), 0.024, 0.024)
-        J["palm" + sd] = ((s * 0.295, 0.0, 0.79), 0.03, 0.016)
-        for k, dx in enumerate((-0.022, -0.007, 0.008, 0.022)):
-            J[f"f{k}a" + sd] = ((s * (0.295 + dx * 0.6), -0.005, 0.745), 0.011, 0.011)
-            J[f"f{k}b" + sd] = ((s * (0.295 + dx), -0.012, 0.64), 0.0085, 0.0085)
-            J[f"f{k}c" + sd] = ((s * (0.295 + dx * 1.1), -0.02, 0.53 - 0.012 * (k in (1, 2))), 0.006, 0.006)
-        J["thumba" + sd] = ((s * 0.272, -0.03, 0.745), 0.011, 0.011)
-        J["thumbb" + sd] = ((s * 0.262, -0.05, 0.672), 0.008, 0.008)
-        J["hip" + sd] = ((s * 0.10, 0.0, 1.11), 0.075, 0.075)
-        J["knee" + sd] = ((s * 0.11, -0.025, 0.62), 0.05, 0.05)
-        J["ankle" + sd] = ((s * 0.11, 0.02, 0.09), 0.032, 0.032)
-        J["toe" + sd] = ((s * 0.11, -0.13, 0.025), 0.028, 0.02)
-    return {k: [Vector(p), rx, ry] for k, (p, rx, ry) in J.items()}
-
-
-# (name, from, to, where along, radius x, radius y): muscle and bone between the joints
-MIDS = [("clav", "upchest", "shoulder", 0.5, 0.042, 0.036),
-        ("bicep", "shoulder", "elbow", 0.42, 0.044, 0.041),
-        ("forearm", "elbow", "wrist", 0.28, 0.037, 0.033),
-        ("thigh", "hip", "knee", 0.38, 0.08, 0.076),
-        ("calf", "knee", "ankle", 0.28, 0.056, 0.052)]
-
-
-def add_mids(J):
-    for sd in "LR":
-        for mid, a, b, t, rx, ry in MIDS:
-            a = a if a == "upchest" else a + sd
-            J[mid + sd] = [J[a][0].lerp(J[b + sd][0], t), rx, ry]
-
-
-def body_edges():
-    E = [("pelvis", "waist"), ("waist", "chest"), ("chest", "upchest"),
-         ("upchest", "neck0"), ("neck0", "neck1"), ("neck1", "neck2")]
-    for sd in "LR":
-        chain = lambda *ks: [(ks[i] if ks[i] in ("upchest", "pelvis") else ks[i] + sd, ks[i + 1] + sd)  # noqa: E731
-                             for i in range(len(ks) - 1)]
-        E += chain("upchest", "clav", "shoulder", "bicep", "elbow", "forearm", "wrist", "palm")
-        E += chain("palm", "thumba", "thumbb")
-        E += chain("pelvis", "hip", "thigh", "knee", "calf", "ankle", "toe")
-        for k in range(4):
-            E += [("palm" + sd, f"f{k}a" + sd), (f"f{k}a" + sd, f"f{k}b" + sd), (f"f{k}b" + sd, f"f{k}c" + sd)]
-    return E
-
-
-ARM = ["elbow", "wrist", "palm", "thumba", "thumbb"] + [f"f{k}{c}" for k in range(4) for c in "abc"]
-
-
-def bend_forward(J, deg, pivot_z=1.2):
-    """Fold the torso forward at the hips; arms keep hanging straight down."""
-    rot = Matrix.Rotation(math.radians(-deg), 3, "X")
-    pivot = Vector((0, 0, pivot_z))
-    upper = ["waist", "chest", "upchest", "neck0", "neck1", "neck2", "shoulderL", "shoulderR"]
-    for sd in "LR":
-        before = J["shoulder" + sd][0].copy()
-        after = pivot + rot @ (before - pivot)
-        for k in ARM:
-            J[k + sd][0] += after - before
-    for k in upper:
-        J[k][0] = pivot + rot @ (J[k][0] - pivot)
-
-
-def reach_arm(J, sd, target):
-    """Raise one arm and stretch those long fingers toward `target`."""
-    sh = J["shoulder" + sd][0]
-    d = (target - sh).normalized()
-    side = Vector((1 if sd == "L" else -1, 0, 0))
-    elbow = sh + d * 0.48 + Vector((0, 0, -0.07)) + side * 0.03
-    wrist = elbow + d * 0.47
-    palm = wrist + d * 0.09
-    J["elbow" + sd][0], J["wrist" + sd][0], J["palm" + sd][0] = elbow, wrist, palm
-    across = d.cross(Vector((0, 0, 1))).normalized()
-    for k, dx in enumerate((-0.022, -0.007, 0.008, 0.022)):
-        spread = across * dx * (1 if sd == "L" else -1)
-        J[f"f{k}a" + sd][0] = palm + d * 0.05 + spread * 0.6
-        J[f"f{k}b" + sd][0] = palm + d * 0.15 + spread * 1.2 + Vector((0, 0, -0.01))
-        J[f"f{k}c" + sd][0] = palm + d * 0.25 + spread * 1.6 + Vector((0, 0, -0.03))
-    J["thumba" + sd][0] = palm + d * 0.03 + Vector((0, 0, 0.03))
-    J["thumbb" + sd][0] = palm + d * 0.09 + Vector((0, 0, 0.045))
-
-
-def ceiling_joints():
-    """F7: flat against the ceiling above the operator, head hanging down."""
-    cx = CAM_POS.x
-    J = {
-        "upchest": ((cx, 1.00, 2.585), 0.13, 0.075),
-        "chest": ((cx, 1.20, 2.60), 0.115, 0.075),
-        "waist": ((cx, 1.42, 2.61), 0.07, 0.055),
-        "pelvis": ((cx, 1.62, 2.60), 0.11, 0.08),
-        "neck0": ((cx, 0.86, 2.55), 0.046, 0.046),
-        "neck1": ((cx, 0.77, 2.47), 0.04, 0.04),
-    }
-    for s, sd in ((1, "L"), (-1, "R")):
-        J["shoulder" + sd] = ((cx + s * 0.21, 1.02, 2.60), 0.05, 0.05)
-        J["elbow" + sd] = ((cx + s * 0.56, 0.86, 2.40), 0.037, 0.037)
-        J["wrist" + sd] = ((cx + s * 0.76, 0.62, 2.63), 0.025, 0.025)
-        J["palm" + sd] = ((cx + s * 0.79, 0.55, 2.665), 0.03, 0.016)
-        for k, a in enumerate((-0.5, -0.17, 0.17, 0.5)):
-            dirv = Vector((s * math.sin(a + 0.3), -math.cos(a + 0.3), 0))
-            base = Vector((cx + s * 0.79, 0.55, 2.672))
-            J[f"f{k}a" + sd] = (base + dirv * 0.05, 0.011, 0.011)
-            J[f"f{k}b" + sd] = (base + dirv * 0.15, 0.0085, 0.0085)
-            J[f"f{k}c" + sd] = (base + dirv * 0.25, 0.006, 0.006)
-        J["thumba" + sd] = ((cx + s * 0.74, 0.52, 2.67), 0.011, 0.011)
-        J["thumbb" + sd] = ((cx + s * 0.70, 0.47, 2.672), 0.008, 0.008)
-        J["hip" + sd] = ((cx + s * 0.10, 1.68, 2.60), 0.07, 0.07)
-        J["knee" + sd] = ((cx + s * 0.62, 1.86, 2.44), 0.047, 0.047)
-        J["ankle" + sd] = ((cx + s * 0.78, 1.70, 2.66), 0.032, 0.032)
-        J["toe" + sd] = ((cx + s * 0.86, 1.58, 2.685), 0.028, 0.02)
-    return {k: [Vector(p), rx, ry] for k, (p, rx, ry) in J.items()}
-
-
-def skin_body(name, J, col):
-    add_mids(J)
-    names = list(J.keys())
-    idx = {k: i for i, k in enumerate(names)}
-    edges = [(idx[a], idx[b]) for a, b in body_edges() if a in idx and b in idx]
-    me = bpy.data.meshes.new(name)
-    me.from_pydata([J[k][0] for k in names], edges, [])
-    ob = new_object(name, me, col)
-    sk = ob.modifiers.new("Skin", "SKIN")
-    sk.use_smooth_shade = True
-    sk.branch_smoothing = 0.35
-    for i, k in enumerate(names):
-        sv = me.skin_vertices[0].data[i]
-        sv.radius = (J[k][1], J[k][2])
-        sv.use_root = (k == "pelvis")
-    sub = ob.modifiers.new("Subsurf", "SUBSURF")
-    sub.levels = sub.render_levels = 2
-    flesh = bpy.data.textures.get("Flesh") or bpy.data.textures.new("Flesh", "CLOUDS")
-    flesh.noise_scale = 0.045
-    disp = ob.modifiers.new("Lumps", "DISPLACE")
-    disp.texture, disp.strength, disp.mid_level = flesh, 0.007, 0.5
-    me.materials.append(bpy.data.materials["Skin"])
-    return ob
-
-
-def orient(forward, up=Vector((0, 0, 1))):
-    """Rotation whose local -Y looks along `forward` with local +Z toward `up`."""
-    y = -forward.normalized()
-    z = (up - y * up.dot(y)).normalized()
-    x = y.cross(z)
-    return Matrix((x, y, z)).transposed().to_quaternion()
-
-
-def build_figure(key, J, assets, M, col, neck_end, head_offset, base_q, smile, roll=0.0,
-                 eye_mat=None, shape_keys=False):
-    fcol = bpy.data.collections.new(key)
-    col.children.link(fcol)
-    body = skin_body(f"{key}_Body", J, fcol)
-
-    pivot = new_object(f"{key}_Neck", None, fcol)
-    pivot.location = neck_end
-    pivot.rotation_mode = "QUATERNION"
-    pivot.rotation_quaternion = base_q
-    roller = new_object(f"{key}_Roll", None, fcol, parent=pivot)
-    roller.rotation_euler = (0, math.radians(roll), 0)
-    head = new_object(f"{key}_Head", assets["head"], fcol, parent=roller)
-    head.location = head_offset
-    head.scale = (HEAD_SCALE,) * 3
-
-    teeth = new_object(f"{key}_Teeth", assets["teeth"], fcol, parent=head)
-
-    cut_me = cutter_mesh(f"{key}_MouthCut", assets["bvh"], [smile])
-    cut_me.materials.append(M["gums"])
-    cutter = new_object(f"{key}_MouthCut", cut_me, fcol, parent=head)
-    cutter.hide_render = True
-    cutter.display_type = "WIRE"
-    if shape_keys:
-        cutter.shape_key_add(name="Basis")
-        for s in SMILE_KEYS[1:]:
-            kb = cutter.shape_key_add(name=f"grin_{s:.2f}")
-            for v, co in zip(kb.data, cutter_coords(assets["bvh"], s)):
-                v.co = co
-    mod = head.modifiers.new("Mouth", "BOOLEAN")
-    mod.operation, mod.object = "DIFFERENCE", cutter
-    mod.solver = "MANIFOLD"     # EXACT silently drops this cut
-    mod.material_mode = "TRANSFER"
-
-    eyes = []
-    cam = bpy.data.objects["Camcorder"]
-    for k, pos in enumerate(assets["eyes"]):
-        e = new_object(f"{key}_Eye{k}", assets["eye"], fcol, parent=head)
-        e.location = pos
-        e.scale = (EYE_R,) * 3
-        tr = e.constraints.new("DAMPED_TRACK")
-        tr.target, tr.track_axis = cam, "TRACK_NEGATIVE_Y"
-        eyes.append(e)
-    for e in eyes:               # shared eyeball mesh, per-object material (F7's eyes shine)
-        e.material_slots[0].link = "OBJECT"
-        e.material_slots[0].material = eye_mat or M["eye"]
-
-    return {"objs": [body, head, teeth] + eyes, "pivot": pivot, "roller": roller, "cutter": cutter, "head": head}
+# key, pose, expression, where its head is (x, y), how far its head is cocked
+APPEARANCES = [
+    ("F1", "marionette", "blank", (0.02, 27.2), 22),     # under the EXIT sign, up on its toes
+    ("F2", "marionette", "blank", (-0.30, 20.5), -30),
+    ("F3", "folded", "blank", (0.22, 14.2), 12),         # bent double, face up at you
+    ("F4", "reach", "grin", (-0.12, 9.4), 8),            # reaching for the lens. first smile
+    ("F5", "spider", "wide", (0.16, 5.6), 0),            # coming head first, upside down
+]
+F6_HEAD = (0.08, 2.4)        # where it finally stops
+F7_HEAD = (0.28, 0.5)        # straight above the operator
 
 
 def keep_visible(objs, start, end):
@@ -838,85 +426,66 @@ def keep_visible(objs, start, end):
         for f, hidden in ((0, True), (start, False), (end, True)):
             ob.hide_render = hidden
             ob.keyframe_insert("hide_render", frame=f)
-    bpy.context.scene.frame_set(0)
 
 
-def head_offset_upright():
-    return Vector((0, 0.012, 0.128)) * HEAD_SCALE
+def tenant_objects(h):
+    return [h.body, h.teeth, h.tongue] + h.eyes
 
 
-def build_figures(M):
-    col = collection("It")
-    assets = build_figure_assets(M)
-    rng = random.Random(9)
+def build_figures(cam):
+    col = collection("Tenant")
+    TM = C.materials(Nodes, rgba)
+    for key, pose, face, head, roll in APPEARANCES:
+        h = C.build(key, col, TM, pose=pose, face=face, cam=cam, look=CAM_POS, roll=roll, head_at=head)
+        keep_visible(tenant_objects(h), *T.FIGURES[key])
 
-    # (key, position on the floor, roll, how it stands)
-    upright = [("F1", (0.02, 27.3), 20, None),
-               ("F2", (-0.28, 20.6), 33, None),
-               ("F3", (0.22, 14.4), -21, None),
-               ("F4", (-0.12, 9.6), 47, "reach"),
-               ("F5", (0.16, 6.3), 61, "hunch"),
-               ("F6", F6_POS, T.ROLL_F6[0][1], "tall")]
-    figs = {}
-    for key, (fx, fy), roll, how in upright:
-        J = base_joints()
-        if how == "reach":
-            reach_arm(J, "R", Vector((CAM_POS.x - fx, -fy + 1.2, 1.5)))
-        if how == "hunch":
-            bend_forward(J, 28)
-            for sd in "LR":
-                for k in ARM:
-                    J[k + sd][0].z -= 0.12
-        scale = 1.05 if how == "tall" else 1.0 + rng.uniform(-0.02, 0.02)
-        for k in J:
-            J[k][0] = J[k][0] * scale + Vector((fx, fy, 0))
-        neck = J["neck2"][0]
-        head_c = neck + head_offset_upright()
-        q = orient(CAM_POS - head_c)
-        fig = build_figure(key, J, assets, M, col, neck, head_offset_upright(), q,
-                           T.SMILE.get(key, T.SMILE["F5"]), roll, shape_keys=(key == "F6"))
-        keep_visible(fig["objs"], *T.FIGURES[key])
-        figs[key] = fig
-
-    # F6: once it stops moving, it starts to smile, and the neck gives out in jerks.
-    f6 = figs["F6"]
-    for f, deg in T.ROLL_F6:
-        f6["roller"].rotation_euler = (0, math.radians(deg), 0)
-        f6["roller"].keyframe_insert("rotation_euler", index=1, frame=f)
-    blocks = f6["cutter"].data.shape_keys.key_blocks
+    # F6: stands over you and smiles, then keeps smiling past where a mouth stops,
+    # while its head goes over one cracking notch at a time.
+    f6 = C.build("F6", col, TM, pose="loom", face="blank", keys=("grin", "wide"), cam=cam, look=CAM_POS,
+                 head_at=F6_HEAD)
+    keep_visible(tenant_objects(f6), *T.FIGURES["F6"])
+    FOCUS["F6"] = C.head_centre(f6)
+    pb = f6.arm.pose.bones["head"]
+    base = pb.matrix.copy()
+    for f, deg in [(0, T.ROLL_F6[0][1])] + T.ROLL_F6:
+        pb.matrix = base
+        bpy.context.view_layer.update()
+        C.look_at(f6, CAM_POS, deg)
+        pb.keyframe_insert("rotation_quaternion", frame=f)
+        pb.keyframe_insert("location", frame=f)
+    FOCUS["F6_end"] = C.head_centre(f6)                # where its face ends up, over on its shoulder
+    kb = f6.body.data.shape_keys.key_blocks
     a, b = T.FIGURES["F6"]
     for f in range(a, b + 1):
-        s = T.smile_f6(f)
-        k = max(i for i in range(len(SMILE_KEYS) - 1) if SMILE_KEYS[i] <= s + 1e-9) if s < 1 else len(SMILE_KEYS) - 2
-        u = (s - SMILE_KEYS[k]) / (SMILE_KEYS[k + 1] - SMILE_KEYS[k])
-        for j in range(1, len(SMILE_KEYS)):
-            w = (1 - u) if j == k else (u if j == k + 1 else 0.0)
-            blocks[j].value = w
-            blocks[j].keyframe_insert("value", frame=f)
+        g, w = T.grin_f6(f), T.wide_f6(f)
+        kb["grin"].value, kb["wide"].value = g * (1 - w), w
+        kb["grin"].keyframe_insert("value", frame=f)
+        kb["wide"].keyframe_insert("value", frame=f)
 
-    # F7: on the ceiling, right above you, the whole time the camera is in night-shot.
-    J = ceiling_joints()
-    head_c = Vector((CAM_POS.x, 0.62, 2.27))
-    face = (CAM_POS - head_c).normalized()
-    cam_up = Vector((0, -face.z, face.y)) * -1          # "up" as the operator sees it, looking up at it
-    q = orient(face, up=cam_up)
-    back = head_c - face * 0.104 * HEAD_SCALE
-    J["neck2"] = [back.copy(), 0.037, 0.037]
-    q = (Quaternion(face, math.radians(-32)) @ q)
-    offset = Vector((0, -0.104, 0.0)) * HEAD_SCALE
-    f7 = build_figure("F7", J, assets, M, col, back, offset, q, 1.0, 0.0, eye_mat=M["eye_glow"])
-    keep_visible(f7["objs"], *T.FIGURES["F7"])
-    # the lunge
-    target = CAM_POS + face * -0.22
+    # F7: on the ceiling the whole time the camera's in night-shot.
+    f7 = C.build("F7", col, TM, pose="ceiling", face="wide", keys=("scream",), cam=cam, look=CAM_POS, roll=15,
+                 eye_mat=TM["TenantEyeShine"], on_ceiling=H - 0.01, head_at=F7_HEAD)
+    keep_visible(tenant_objects(f7), *T.FIGURES["F7"])
+    FOCUS["F7"] = C.head_centre(f7)
+    start = f7.arm.location.copy()
+    lunge = (CAM_POS - FOCUS["F7"]) * 0.75
+    scream = f7.body.data.shape_keys.key_blocks["scream"]
     a, b = T.LUNGE
     for f in range(a - 1, b + 1):
         u = min(1.0, max(0.0, (f - a + 1) / (b - a))) ** 1.6
-        f7["pivot"].location = back + (target - head_c) * u
-        f7["pivot"].keyframe_insert("location", frame=f)
-    return figs
+        f7.arm.location = start + lunge * u
+        f7.arm.keyframe_insert("location", frame=f)
+        scream.value = min(1.0, u * 1.6)
+        scream.keyframe_insert("value", frame=f)
 
 
 # -------------------------------------------------------------------- camera
+def aim_angles(target):
+    """Camera pitch/yaw (degrees) that put `target` in the middle of frame."""
+    d = target - CAM_POS
+    return 90 + math.degrees(math.atan2(d.z, math.hypot(d.x, d.y))), math.degrees(math.atan2(-d.x, d.y))
+
+
 def cam_state(f):
     pitch, yaw, lens, shake = 89.0, 0.6, 24.0, 1.0
     if 120 <= f < 178:
@@ -924,9 +493,10 @@ def cam_state(f):
     a6, b6 = T.FIGURES["F6"]
     if a6 <= f < T.NV_START:
         g = T.smoothstep(380, 465, min(f, 469))
-        lens = 24 + 28 * g                                   # frozen, zooming in on its face
-        pitch = 89 + 17.2 * g
-        yaw = 0.6 + 1.5 * g
+        p6, y6 = aim_angles(FOCUS["F6"].lerp(FOCUS["F6_end"], T.smoothstep(390, 462, min(f, 469))))
+        lens = 24 + 44 * g                                   # frozen, zooming in on its face
+        pitch = lerp(89, p6, T.smoothstep(350, 420, min(f, 469)))
+        yaw = lerp(0.6, y6, T.smoothstep(350, 420, min(f, 469)))
         shake = 1 + 1.8 * T.smoothstep(400, 468, f)
     if f >= T.NV_START:
         shake = 2.2
@@ -936,7 +506,10 @@ def cam_state(f):
             yaw = lerp(11.0, -9.0, T.smoothstep(500, 525, f))
         else:
             yaw = lerp(-9.0, 0.0, T.smoothstep(525, 540, f))
-        pitch = lerp(88.0, 139.0, T.smoothstep(T.TILT[0], T.TILT[1], f))
+        p7, y7 = aim_angles(FOCUS["F7"])
+        tilt = T.smoothstep(T.TILT[0], T.TILT[1], f)
+        pitch = lerp(88.0, p7, tilt)
+        yaw = lerp(yaw, y7, tilt)
         if f >= T.LUNGE[0]:
             shake = 7.0
     t = f / T.FPS
@@ -997,8 +570,8 @@ def build(samples=14):
     rigs = build_lights()
     animate_lights(rigs)
     cam = build_camera()
+    build_figures(cam)
     animate_camera(cam)
-    build_figures(M)
     snap_all_keys()
     sc.frame_set(0)
     return sc
@@ -1013,10 +586,13 @@ def main():
     ap.add_argument("--frames", nargs=2, type=int, metavar=("START", "END"))
     ap.add_argument("--samples", type=int, default=14)
     ap.add_argument("--percent", type=int, default=100)
+    ap.add_argument("--res", nargs=2, type=int, metavar=("W", "H"))
     args = ap.parse_args(argv)
 
     sc = build(args.samples)
     sc.render.resolution_percentage = args.percent
+    if args.res:
+        sc.render.resolution_x, sc.render.resolution_y = args.res
     if args.blend:
         bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(args.blend), compress=True)
     for frame, png in args.still or []:

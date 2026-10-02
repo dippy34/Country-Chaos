@@ -104,12 +104,14 @@ def roll_f6(f):
     return deg
 
 
-# How wide the grin is (0 = a closed slit, 1 = ear to ear), per appearance.
-SMILE = {"F1": 0.0, "F2": 0.06, "F3": 0.14, "F4": 0.24, "F5": 0.36, "F7": 1.0}
+def grin_f6(f):
+    """It starts to smile..."""
+    return smoothstep(372, 415, f)
 
 
-def smile_f6(f):
-    return SMILE["F5"] + (1.0 - SMILE["F5"]) * smoothstep(372, 458, f)
+def wide_f6(f):
+    """...and doesn't stop where a smile should."""
+    return smoothstep(420, 458, f)
 
 
 def mode(f):
