@@ -181,7 +181,7 @@ def title(f):
     im = Image.new("RGB", (W, H))
     d = ImageDraw.Draw(im)
     font = ImageFont.truetype(TITLE_FONT, 40)
-    lines = [(636, "THE SMALLEST GROUP IS ELIMINATED."), (662, "YOUR GROUP: 1")]
+    lines = [(636, "TAPE 1 OF 7 RECOVERED."), (662, "THE OTHER SIX ARE STILL RECORDING.")]
     for k, (start, s) in enumerate(lines):
         a = np.clip((f - start) / 8, 0, 1) * np.clip((714 - f) / 10, 0, 1)
         if a <= 0:

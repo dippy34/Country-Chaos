@@ -26,6 +26,7 @@ Python.
    lights behind it die, one breaker at a time.
 5. Blackout. The camcorder flips to NIGHTSHOT. The hallway is empty. Something sniffs.
 6. The operator looks up.
+7. *TAPE 1 OF 7 RECOVERED. THE OTHER SIX ARE STILL RECORDING.*
 
 ## The Tenant
 
@@ -98,4 +99,4 @@ All third-party assets are CC0 (public domain dedication):
 - [OpenGameArt](https://opengameart.org): *Deep Bone Crack/Break SFX*, *horror breathing*,
   *Ghost breath*, *Breathing Tired*, *80 CC0 creature SFX*, *8 wet squish, slurp impacts*.
 
-*(It ends on a nod to the main game. Minority Panic eliminates the smallest group, after all.)*
+*Tape 1 of 7.*
